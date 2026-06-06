@@ -1,0 +1,11 @@
+# 絕對不要上傳：你的 LeetCode 登入 cookie
+config.json
+
+# 快取與雜物
+data/_imgcache/
+data/details/
+pdf/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

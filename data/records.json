@@ -1,0 +1,69 @@
+{
+  "two-sum": {
+    "id": "1",
+    "title": "Two Sum",
+    "difficulty": "Easy",
+    "solved": true,
+    "attempts": [
+      {
+        "time": "2026-06-06 22:49:12",
+        "status": "Accepted",
+        "passed": "63/63",
+        "runtime": "0 ms",
+        "memory": "20.5 MB",
+        "lang": "python3",
+        "submission_id": 2024363525,
+        "accepted": true
+      }
+    ],
+    "solved_at": "2026-06-06 22:49:12"
+  },
+  "digit-frequency-score": {
+    "id": "3945",
+    "title": "Digit Frequency Score",
+    "difficulty": "Easy",
+    "solved": true,
+    "attempts": [
+      {
+        "time": "2026-06-06 23:17:14",
+        "status": "Accepted",
+        "passed": "1000/1000",
+        "runtime": "5 ms",
+        "memory": "19.2 MB",
+        "lang": "python3",
+        "submission_id": 2024430973,
+        "accepted": true
+      }
+    ],
+    "solved_at": "2026-06-06 23:17:14"
+  },
+  "calculate-digit-sum-of-a-string": {
+    "id": "2243",
+    "title": "Calculate Digit Sum of a String",
+    "difficulty": "Easy",
+    "solved": true,
+    "attempts": [
+      {
+        "time": "2026-06-06 23:50:48",
+        "status": "Accepted",
+        "passed": "121/121",
+        "runtime": "0 ms",
+        "memory": "19.2 MB",
+        "lang": "python3",
+        "submission_id": 2024493025,
+        "accepted": true
+      },
+      {
+        "time": "2026-06-07 00:08:04",
+        "status": "Accepted",
+        "passed": "121/121",
+        "runtime": "0 ms",
+        "memory": "19.3 MB",
+        "lang": "python3",
+        "submission_id": 2024514510,
+        "accepted": true
+      }
+    ],
+    "solved_at": "2026-06-06 23:50:48"
+  }
+}
