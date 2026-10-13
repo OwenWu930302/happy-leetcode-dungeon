@@ -45,17 +45,27 @@ python lc.py game
 
 ## 登入 LeetCode
 
-試跑、提交、同步官網進度都需要登入。遊戲**不需要你的密碼**，只要兩個 cookie：
+試跑、提交、同步官網進度都需要登入。遊戲**不需要你的密碼**。
+
+**方法一：用瀏覽器登入（推薦）**
+到「設定 → 帳號」按「用瀏覽器登入 LeetCode」。程式會用你電腦上的 Edge 或 Chrome 開一個獨立的登入視窗，你在裡面正常登入（email、GitHub、Google 都可以），完成後視窗會自動關閉。
+
+- 密碼是直接輸入給 LeetCode 官網，遊戲完全碰不到。
+- 登入視窗使用獨立的瀏覽器設定檔（存在工作區的 `browser-profile/`），不會動到你平常的瀏覽器。
+- cookie 過期時再按一次，通常 LeetCode 還記得你，不用重打密碼。
+- 原理：LeetCode 沒有給第三方用的官方登入，所以程式透過瀏覽器內建的除錯介面（只聽本機 127.0.0.1）讀取 `leetcode.com` 的兩個 cookie。程式碼在 [`game/browser_login.py`](game/browser_login.py)。
+
+**方法二：手動貼 cookie（備案）**
 
 1. 用瀏覽器登入 [leetcode.com](https://leetcode.com)。
 2. 按 `F12` → **Application（應用程式）** → 左邊 **Cookies** → `https://leetcode.com`。
-3. 複製 `LEETCODE_SESSION` 和 `csrftoken` 的 Value，貼到遊戲的「設定 → 帳號」，按「驗證並登入」。
+3. 複製 `LEETCODE_SESSION` 和 `csrftoken` 的 Value，貼到「設定 → 帳號 → 備案：手動貼 cookie」，按「驗證並登入」。
 
-cookie 只存在你電腦上工作區的 `config.json`，不會上傳到任何地方。大約兩週會過期，到時候回來重貼一次就好。
+不管用哪個方法，cookie 都只存在你電腦上工作區的 `config.json`，不會上傳到任何地方。
 
 ## 在 VS Code 邊寫邊玩
 
-1. 到遊戲的「設定 → 工作區」按「安裝 VS Code 任務」，再按「在 VS Code 開啟工作區」。
+1. 到遊戲的「設定 → 工作區」按「安裝 VS Code 任務」（順便會開啟自動存檔），再按「在 VS Code 開啟工作區」。
 2. VS Code 會問「允許自動任務？」，選允許，之後一打開工作區遊戲就會自動啟動。
 3. 按 `Ctrl+Shift+P` → 輸入 **Simple Browser: Show** → 貼上 `http://localhost:8765`，把遊戲拖到編輯器右邊。
 4. 在遊戲裡選題，解題檔會自動打開。寫完在遊戲按「試招」（不扣血）或「出招」（正式提交），或在 VS Code 按 **`Ctrl+Shift+B`** 直接提交。
@@ -163,6 +173,7 @@ launcher.py           EXE 進入點
 game/engine.py        演算法：技能樹、戰力、推薦
 game/rogue.py         肉鴿遠征：地圖、戰鬥、遺物、強化
 game/server.py        本機伺服器（只聽 127.0.0.1）
+game/browser_login.py 瀏覽器一鍵登入（DevTools Protocol 讀 cookie）
 game/static/          遊戲畫面（純 HTML/CSS/JS，沒有外部框架）
 data/problems.json    內建題庫（簡單題）
 build.bat             Windows 打包腳本
@@ -172,7 +183,13 @@ tools/release.yml     自動打包發佈的 GitHub Actions 範本
 ## 常見問題
 
 **Q：試招或出招出現 403、同步說登入失效？**
-cookie 過期了，到「設定 → 帳號」重新貼一次。
+cookie 過期了，到「設定 → 帳號」再登入一次。
+
+**Q：出招出現 `IndentationError`，或說「還是空白範本」？**
+解題檔還沒存檔（VS Code 分頁標題旁邊有白點 ●）。按 `Ctrl+S`，或在設定頁安裝 VS Code 任務來開啟自動存檔。
+
+**Q：瀏覽器登入說找不到 Edge 或 Chrome？**
+用手動貼 cookie，或設定環境變數 `LCD_BROWSER` 指向瀏覽器執行檔。
 
 **Q：支援力扣中文站（leetcode.cn）嗎？**
 目前只支援 leetcode.com 帳號。題目頁有連到力扣中文站的連結，可以對照看中文題目。歡迎 PR！

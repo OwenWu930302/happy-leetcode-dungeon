@@ -493,6 +493,13 @@ def read_solution(p: dict):
     lang = meta.get("lang", ext_lang)
     if not code.strip():
         sys.exit("❌ 你的程式碼是空的，先寫點東西再提交吧 :)")
+    # 防呆：內容跟官方空白範本一模一樣 → 八成是在編輯器裡寫了但還沒存檔
+    cached = load_json(DATA_DIR / "details" / f"{p['slug']}.json", None)
+    if cached:
+        squash = lambda t: re.sub(r"\s+", "", t or "")
+        if squash(code) == squash(get_snippet(cached, lang)):
+            sys.exit(f"❌ {path.name} 還是空白範本，看起來還沒存檔。\n"
+                     "   在 VS Code 按 Ctrl+S 存檔後再試一次（分頁標題旁邊有白點 ● 就是還沒存）。")
     return qid, lang, code, path
 
 
@@ -846,6 +853,7 @@ data/_imgcache/
 data/problems.json
 pdf/
 assets/
+browser-profile/
 .vscode/
 """
 
@@ -1150,6 +1158,15 @@ def install_vscode(force=False, target: Path = None):
     """在工作區（或指定資料夾）安裝 .vscode/tasks.json。回傳寫入的路徑，已存在且不覆蓋時回傳 None。"""
     dst = (target or ROOT) / ".vscode"
     dst.mkdir(parents=True, exist_ok=True)
+    # 開啟自動存檔：寫完不用按 Ctrl+S，出招時一定送出最新的程式碼
+    sf = dst / "settings.json"
+    try:
+        settings = load_json(sf, {}) if sf.exists() else {}
+    except ValueError:
+        settings = None  # 使用者自己寫了含註解的設定，就不動它
+    if settings is not None and "files.autoSave" not in settings:
+        settings.update({"files.autoSave": "afterDelay", "files.autoSaveDelay": 500})
+        save_json(sf, settings)
     f = dst / "tasks.json"
     if f.exists() and not force:
         return None
@@ -1166,6 +1183,7 @@ def cmd_vscode(args):
     print(
         f"\n用 VS Code 打開工作區資料夾：{ROOT}\n"
         "   • VS Code 會問「允許自動任務？」→ 允許，之後打開資料夾就自動啟動遊戲\n"
+        "   • 已開啟自動存檔，寫完不用按 Ctrl+S\n"
         "   • Ctrl+Shift+B：提交目前打開的解題檔（出招）\n"
         "   • Ctrl+Shift+P → Tasks: Run Test Task：試跑目前的解題檔（試招）\n"
         "   不想自動啟動：把 .vscode/tasks.json 裡的 \"runOn\": \"folderOpen\" 那行刪掉就好。"

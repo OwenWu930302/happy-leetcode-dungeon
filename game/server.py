@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import lc  # noqa: E402
-from game import engine, rogue  # noqa: E402
+from game import browser_login, engine, rogue  # noqa: E402
 
 STATIC = lc.APP_DIR / "game" / "static"
 SAVE_PATH = lc.DATA_DIR / "game.json"
@@ -43,6 +43,7 @@ PROFILE_DEFAULT = {"name": "", "companion": "露緹", "avatar": "p0", "bg": "dun
                    "onboarded": False, "lcUser": None, "lcAvatar": None, "uploads": {}}
 TOKEN = secrets.token_urlsafe(16)
 LOCK = threading.RLock()
+BROWSER = None  # 在 verify_login 定義之後建立
 
 LEVEL_TITLES = [(1, "見習獵題人"), (4, "銅徽獵題人"), (8, "銀徽獵題人"), (12, "金徽獵題人"),
                 (18, "演算法術士"), (25, "傳奇獵題人")]
@@ -77,6 +78,19 @@ def save_profile(prof):
 def logged_in(cfg):
     sess = cfg.get("session") or ""
     return bool(sess and cfg.get("csrftoken") and "貼上" not in sess)
+
+
+def save_login(sess, csrf, user, avatar):
+    with LOCK:
+        cfg = lc.load_config()
+        cfg.update({"session": sess, "csrftoken": csrf})
+        cfg.setdefault("lang", "python3")
+        lc.save_json(lc.CONFIG_PATH, cfg)
+        prof = load_profile()
+        prof["lcUser"], prof["lcAvatar"] = user, avatar
+        if not prof["name"]:
+            prof["name"] = user
+        save_profile(prof)
 
 
 def verify_login(session_cookie, csrftoken):
@@ -125,6 +139,9 @@ def level_info(xp):
 # ---------------------------------------------------------------------------
 # VS Code
 # ---------------------------------------------------------------------------
+BROWSER = browser_login.BrowserLogin(lc.ROOT / "browser-profile", verify_login)
+
+
 def code_line(path: Path) -> int:
     """游標要停的行：程式碼標記之後，最後一個函式宣告的下一行（Python、C++、Java… 都適用）。"""
     try:
@@ -230,6 +247,7 @@ def build_state(save, events=None):
         "lang": lc.default_lang(),
         "workspace": str(lc.ROOT),
         "frozen": lc.FROZEN,
+        "browserLogin": bool(browser_login.find_browser()),
         "vscodeInstalled": (lc.ROOT / ".vscode" / "tasks.json").exists(),
         "backgrounds": BACKGROUNDS,
         "events": events,
@@ -322,16 +340,18 @@ def api(path, body, query):
             if len(sess) < 20 or len(csrf) < 10:
                 raise ValueError("兩個欄位都要貼上完整的 cookie 值")
             user, avatar = verify_login(sess, csrf)
-            cfg = lc.load_config()
-            cfg.update({"session": sess, "csrftoken": csrf})
-            cfg.setdefault("lang", "python3")
-            lc.save_json(lc.CONFIG_PATH, cfg)
-            prof = load_profile()
-            prof["lcUser"], prof["lcAvatar"] = user, avatar
-            if not prof["name"]:
-                prof["name"] = user
-            save_profile(prof)
+            save_login(sess, csrf, user, avatar)
             return build_state(save, [{"kind": "login", "user": user}])
+
+        if path == "/api/login/browser":
+            return BROWSER.start(save_login)
+
+        if path == "/api/login/status":
+            return BROWSER.status()
+
+        if path == "/api/login/cancel":
+            BROWSER.cancel()
+            return BROWSER.status()
 
         if path == "/api/logout":
             cfg = lc.load_config()

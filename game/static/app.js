@@ -825,7 +825,7 @@ function avatarPicker(p) {
 }
 
 function loginForm() {
-  return `<ol class="steps">
+  const manual = `<ol class="steps">
       <li>用瀏覽器登入 <a href="https://leetcode.com" target="_blank" rel="noopener">leetcode.com</a></li>
       <li>按 <code>F12</code> → <b>Application（應用程式）</b> → 左邊 <b>Cookies</b> → <code>https://leetcode.com</code></li>
       <li>複製 <code>LEETCODE_SESSION</code> 和 <code>csrftoken</code> 的 Value，貼到下面</li>
@@ -834,8 +834,42 @@ function loginForm() {
       <label class="field">LEETCODE_SESSION<input id="lcSession" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ0eXAiOiJKV1Qi…"></label>
       <label class="field">csrftoken<input id="lcCsrf" type="password" autocomplete="off" spellcheck="false" placeholder="一長串英數字"></label>
     </div>
-    <p class="muted" style="font-size:12.5px;margin:6px 0 10px">cookie 只會存在你電腦上的 <span class="mono">config.json</span>，不會上傳到任何地方。大約兩週會過期，到時候回來重貼一次。</p>
-    <button class="btn primary" data-login>驗證並登入</button>`;
+    <button class="btn" data-login style="margin-top:10px">驗證並登入</button>`;
+  const viaBrowser = S && S.browserLogin;
+  return `${viaBrowser ? `<div style="display:grid;gap:8px;margin-bottom:12px">
+      <div><button class="btn primary" data-blogin>用瀏覽器登入 LeetCode</button></div>
+      <p class="muted" style="font-size:12.5px;margin:0">會開一個獨立的登入視窗，在裡面正常登入（email、GitHub、Google 都可以），完成後視窗會自動關閉。密碼是直接輸入給 LeetCode，遊戲碰不到。</p>
+      <div class="blogin-status"></div>
+    </div>` : ""}
+    <details ${viaBrowser ? "" : "open"}><summary class="muted" style="cursor:pointer;margin-bottom:8px">${viaBrowser ? "備案：手動貼 cookie" : "貼上 cookie 登入"}</summary>${manual}</details>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">登入資訊只存在你電腦上的 <span class="mono">config.json</span>，不會上傳到任何地方。大約兩週會過期，到時候再按一次登入就好。</p>`;
+}
+
+let bloginTimer = null;
+function bloginShow(html) { document.querySelectorAll(".blogin-status").forEach((e) => (e.innerHTML = html)); }
+async function startBrowserLogin() {
+  let st;
+  try { st = await api("/api/login/browser", {}); } catch (e) { return toast("info", "開不了登入視窗", e.message); }
+  if (st.state === "error") return bloginShow(`<div class="notice">${esc(st.error)}</div>`);
+  bloginShow(`<div class="notice">已開啟登入視窗（${esc(st.browser || "瀏覽器")}），請在視窗裡登入 LeetCode，登入完會自動回來。 <button class="btn ghost" data-bcancel style="padding:2px 10px">取消</button></div>`);
+  say("登入視窗開好了！登入完我會自動接手。");
+  clearInterval(bloginTimer);
+  bloginTimer = setInterval(async () => {
+    let s2;
+    try { s2 = await api("/api/login/status"); } catch (e) { return; }
+    if (s2.state === "waiting") return;
+    clearInterval(bloginTimer);
+    if (s2.state === "ok") {
+      bloginShow("");
+      settingsSig = ""; modalKey = "";
+      const full = await api("/api/state");
+      full.events = [{ kind: "login", user: s2.user }];
+      applyState(full);
+    } else if (s2.state === "error") {
+      bloginShow(`<div class="notice">${esc(s2.error)}</div>`);
+      say("登入沒有完成，可以再按一次，或改用手動貼 cookie。");
+    } else bloginShow("");
+  }, 1500);
 }
 
 function renderSettings() {
@@ -1027,6 +1061,8 @@ document.addEventListener("click", async (ev) => {
     return;
   }
   if (d.login !== undefined) return doLogin();
+  if (d.blogin !== undefined) return startBrowserLogin();
+  if (d.bcancel !== undefined) { clearInterval(bloginTimer); await api("/api/login/cancel", {}).catch(() => {}); bloginShow(""); return; }
   if (d.relogin !== undefined) { $("#reloginBox").hidden = false; return; }
   if (d.logout !== undefined) { const st = await act("/api/logout", {}); if (st) { settingsSig = ""; render(); toast("info", "已登出"); } return; }
   if (d.ws !== undefined) { const r = await act("/api/workspace/open", {}); if (r) toast("info", "開啟工作區", r.path); return; }
