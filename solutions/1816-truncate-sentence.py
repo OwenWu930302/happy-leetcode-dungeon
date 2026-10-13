@@ -10,4 +10,8 @@
 # === 以下是你的程式碼 (YOUR CODE BELOW) ===
 class Solution:
     def truncateSentence(self, s: str, k: int) -> str:
+        words=s.split(" ") #用list
+        
+        string=" ".join(words[:k])
+        return string
         

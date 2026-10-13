@@ -5,6 +5,50 @@
 
 ---
 
+## 🎮 遊戲模式：演算法地城
+
+```powershell
+python lc.py game
+```
+
+刷題變成一款肉鴿（Roguelike）遊戲，畫面開在 VS Code 旁邊，一邊看題一邊寫：
+
+| 畫面 | 內容 |
+|------|------|
+| **酒館** | 今日委託（依你的戰力挑的 3 題）、賞金任務、同步與擴充題庫 |
+| **遠征** | 每局隨機生成 10 層地城：戰鬥、精英、寶箱、篝火、商店、神秘事件、Boss。答錯扣血、通過拿遺物，死掉留下結晶買永久強化 |
+| **技能樹** | 依題目的 LeetCode 標籤**自動長出來**的技能樹，解題就會點亮，前置點亮後才解鎖下一環 |
+| **戰力** | 類 Elo 戰力、段位、技能雷達圖、各技能戰力排行 |
+| **題目** | 題目敘述、試招（範例測資）、出招（正式提交）、判題結果 |
+
+右下角還會不定時跳出「廣告」，推一題剛好打得贏的題目給你，接下就是雙倍經驗的賞金任務。
+
+### 在 VS Code 裡邊寫邊玩
+
+1. 先裝一次 VS Code 任務：`python lc.py vscode`（會建立 `.vscode/tasks.json`）。
+   之後用 VS Code 打開這個資料夾，第一次會問你「允許自動任務？」，選允許，一打開資料夾遊戲就會自動啟動
+   （或手動：`Ctrl+Shift+P` → `Tasks: Run Task` → `🎮 開心刷題：開始遊戲`）。
+2. `Ctrl+Shift+P` → 輸入 **Simple Browser: Show** → 貼上 `http://localhost:8765`，遊戲就開在編輯器旁邊。
+   把它拖到右半邊，左邊寫程式、右邊看題目。
+3. 在遊戲裡選題，解題檔會自動在 VS Code 打開，游標停在要寫程式的地方。
+4. 寫完在遊戲按「試招」（不扣血）或「出招」（正式提交）。
+   也可以直接在 VS Code 按 **`Ctrl+Shift+B`** 提交目前的檔案，遊戲會自動判定戰果。
+
+### 背後的演算法（都在 `game/engine.py`）
+
+- **技能樹自動生成**：每個 LeetCode 標籤是一個節點。常見標籤用手寫的前置關係；題庫出現沒看過的標籤時，
+  找「比它常見、又最常一起出現」的標籤當前置（邊只從常見指向罕見，所以保證不會有環）。
+  接著用 **Kahn 拓撲排序** 算層數、**重心法** 排版減少連線交叉，再依拓撲序做一次 **DAG DP** 決定每個節點有沒有點亮。
+- **戰力**：每題依官方難度與通過率估一個難度分，把你的每次提交當成一場對戰，用 **Elo** 逐筆更新。
+  各技能戰力 = 總戰力 + 你在該技能的「超額表現」（樣本少時打折）。
+- **推薦**：每題打分 = 「難度離你的戰力 +80 多近」（高斯分布）×（1 + 技能弱點加成），再依分數加權抽樣，每次推的不一樣。
+- **地城生成**：6 條路徑由下往上隨機走、避免交叉，再依層數規則分配節點種類（Slay the Spire 式）。
+
+> 題庫預設只有簡單題。想讓技能樹長出動態規劃、圖論等更深的分支，在遊戲的酒館按「擴充題庫」，
+> 或執行 `python lc.py fetch --all`。
+
+---
+
 ## 目錄
 1. [安裝](#一安裝)
 2. [設定登入（一次就好）](#二設定登入一次就好)
@@ -66,7 +110,7 @@ python lc.py submit 1     # ⑤ 正式提交判題，結果自動記進 records.
 python lc.py stats        # ⑥ 看自己的進度
 ```
 
-題號可用數字（`1`）或英文代稱 slug（`two-sum`）。
+題號可用數字（`1`）、英文代稱 slug（`two-sum`）或解題檔檔名（`0001-two-sum`）。
 
 ---
 
@@ -74,9 +118,10 @@ python lc.py stats        # ⑥ 看自己的進度
 
 ### `fetch` — 抓題目清單
 ```powershell
-python lc.py fetch
+python lc.py fetch          # 只抓簡單題
+python lc.py fetch --all    # 抓全部難度（技能樹會更完整）
 ```
-抓所有簡單題存到 `data/problems.json`。第一次使用、或想更新清單時跑。**不需登入**。
+存到 `data/problems.json`。第一次使用、或想更新清單時跑。**不需登入**。
 
 ### `list` — 列出題目與完成狀態
 ```powershell
@@ -140,6 +185,41 @@ python lc.py sync
 
 結果寫回 `data/records.json`。**需登入**。
 
+### `push` — 把解過的題目推上 GitHub
+```powershell
+python lc.py push                                  # 提交並推送（第二次起這樣就好）
+python lc.py push --repo https://github.com/你/倉庫.git   # 第一次：指定遠端
+python lc.py push -m "解了三題！"                    # 自訂 commit 訊息
+```
+會做這些事：
+1. 自動初始化 git、產生 `SOLVED.md`（漂亮的解題清單，含連結）
+2. 提交 `solutions/`、進度紀錄、清單與程式
+3. 推送到你的 GitHub
+
+> 🔐 **安全**：`config.json`（你的登入 cookie）已被 `.gitignore` 排除，**絕對不會上傳**。
+
+**第一次設定 GitHub（只做一次，二選一）：**
+
+- (A) 已經在 GitHub 開好一個空 repo：
+  ```powershell
+  python lc.py push --repo https://github.com/你的帳號/倉庫名.git
+  ```
+- (B) 用 gh CLI 一鍵建立（先在終端機登入一次）：
+  ```powershell
+  gh auth login
+  gh repo create leetcode-practice --public --source . --remote origin --push
+  ```
+
+設定好之後，每次想備份就只要 `python lc.py push`。
+
+### `game` — 🎮 開啟遊戲
+```powershell
+python lc.py game               # 啟動並自動開瀏覽器
+python lc.py game --no-browser  # 只啟動伺服器（在 VS Code Simple Browser 開）
+python lc.py game --port 9000   # 換埠號
+```
+只聽本機 127.0.0.1，不會對外開放。關閉：在終端機按 `Ctrl+C`。
+
 ### `stats` — 看進度
 ```powershell
 python lc.py stats
@@ -191,6 +271,9 @@ config.example.json    設定範本
 requirements.txt       相依套件
 data/problems.json     簡單題清單
 data/records.json      你的提交紀錄與完成狀態 ← 進度都記在這
+data/game.json         遊戲存檔（遠征、結晶、賞金）
+game/                  遊戲模式：engine.py（演算法）、rogue.py（遠征）、server.py（本機伺服器）、static/（畫面）
+game/vscode/           VS Code 任務範本（python lc.py vscode 會裝到 .vscode/）
 data/details/          各題敘述快取
 solutions/             你的解題檔
 pdf/                   匯出的題目 PDF

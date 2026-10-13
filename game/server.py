@@ -1,0 +1,414 @@
+# -*- coding: utf-8 -*-
+"""
+本機遊戲伺服器：python lc.py game
+================================
+
+只聽 127.0.0.1，不會對外開放。瀏覽器（或 VS Code 的 Simple Browser）打開
+http://localhost:8765 就是遊戲畫面；畫面上的按鈕會呼叫這裡的 /api/*，
+再轉去用 lc.py 原本的功能（建檔、試跑、提交、同步）。
+
+遊戲存檔：data/game.json
+"""
+
+import contextlib
+import io
+import json
+import os
+import secrets
+import shutil
+import subprocess
+import sys
+import threading
+import webbrowser
+from datetime import date
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import lc  # noqa: E402
+from game import engine, rogue  # noqa: E402
+
+STATIC = Path(__file__).resolve().parent / "static"
+SAVE_PATH = lc.DATA_DIR / "game.json"
+TOKEN = secrets.token_urlsafe(16)
+LOCK = threading.RLock()
+
+LEVEL_TITLES = [(1, "見習獵題人"), (4, "銅徽獵題人"), (8, "銀徽獵題人"), (12, "金徽獵題人"),
+                (18, "演算法術士"), (25, "傳奇獵題人")]
+
+
+# ---------------------------------------------------------------------------
+# 存檔
+# ---------------------------------------------------------------------------
+def load_save():
+    save = lc.load_json(SAVE_PATH, None) or rogue.new_save()
+    base = rogue.new_save()
+    for k, v in base["meta"].items():
+        save["meta"].setdefault(k, v)
+    save.setdefault("run", None)
+    return save
+
+
+def write_save(save):
+    lc.save_json(SAVE_PATH, save)
+
+
+def load_world():
+    problems = lc.load_json(lc.PROBLEMS_PATH, [])
+    records = lc.load_json(lc.RECORDS_PATH, {})
+    return problems, records
+
+
+def context(problems, records):
+    tree = engine.build_tree(problems, records)
+    power = engine.compute_power(problems, records)
+    return {"problems": problems, "records": records, "tree": tree, "power": power}
+
+
+# ---------------------------------------------------------------------------
+# 等級
+# ---------------------------------------------------------------------------
+def xp_for(level):
+    return 25 * level * (level - 1)
+
+
+def level_info(xp):
+    L = 1
+    while xp_for(L + 1) <= xp:
+        L += 1
+    title = [t for lv, t in LEVEL_TITLES if L >= lv][-1]
+    return {"level": L, "title": title, "xp": xp, "base": xp_for(L), "next": xp_for(L + 1)}
+
+
+# ---------------------------------------------------------------------------
+# VS Code
+# ---------------------------------------------------------------------------
+def code_line(path: Path) -> int:
+    """游標要停的行：解題標記之後，第一個 def 的下一行。"""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 1
+    start = next((i for i, l in enumerate(lines) if lc.META_END in l), 0)
+    defs = [i for i, l in enumerate(lines) if i > start and l.strip().startswith("def ")]
+    return (defs[-1] + 2) if defs else start + 2
+
+
+def open_in_editor(path: Path):
+    line = code_line(path)
+    target = f"{path}:{line}"
+    code = shutil.which("code") or shutil.which("code.cmd")
+    if code:
+        try:
+            subprocess.Popen([code, "-r", "-g", target], cwd=str(ROOT),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return "vscode"
+        except OSError:
+            pass
+    uri = "vscode://file/" + str(path).replace("\\", "/") + f":{line}"
+    try:
+        if os.name == "nt":
+            os.startfile(uri)  # type: ignore[attr-defined]
+        else:
+            webbrowser.open(uri)
+        return "uri"
+    except OSError:
+        return "none"
+
+
+# ---------------------------------------------------------------------------
+# 組合整個畫面需要的狀態
+# ---------------------------------------------------------------------------
+def problem_brief(p, records):
+    r = records.get(p["slug"]) or {}
+    return {
+        "slug": p["slug"], "id": p["id"], "title": p["title"], "difficulty": p["difficulty"],
+        "acRate": p.get("acRate"), "tags": p.get("tags", []), "rating": engine.problem_rating(p),
+        "solved": bool(r.get("solved")), "attempts": len(r.get("attempts", [])),
+        "file": lc.solution_path(p).exists(),
+    }
+
+
+def build_state(save, events=None):
+    problems, records = load_world()
+    ctx = context(problems, records)
+    by_slug = {p["slug"]: p for p in problems}
+
+    events = list(events or [])
+    events += rogue.resolve(save, records, by_slug)
+    events += rogue.resolve_bounties(save, records)
+    if events:
+        write_save(save)
+
+    power = ctx["power"]
+    names = {n["id"]: n["name"] for n in ctx["tree"]["nodes"]}
+    per_tag = [
+        {"id": t, "name": names.get(t, t), **v}
+        for t, v in power["per_tag"].items() if t in names
+    ]
+    per_tag.sort(key=lambda x: -x["events"])
+    total_xp = power["xp"] + save["meta"]["bonus_xp"]
+
+    run = save.get("run")
+    run_view = None
+    if run:
+        run_view = dict(run)
+        run_view["moves"] = rogue.moves(run)
+        cur = run.get("current")
+        if cur and cur.get("chosen") and cur["chosen"] in by_slug:
+            run_view["chosen"] = problem_brief(by_slug[cur["chosen"]], records)
+
+    picks = engine.recommend(problems, records, ctx["tree"], power, k=3, seed=f"daily:{date.today()}")
+    cfg = lc.load_config()
+    solved_recent = sorted(
+        [{"slug": s, "id": r.get("id"), "title": r.get("title"), "difficulty": r.get("difficulty"),
+          "at": r.get("solved_at") or ""} for s, r in records.items() if r.get("solved")],
+        key=lambda x: x["at"], reverse=True)[:8]
+
+    return {
+        "player": {**level_info(total_xp), **{k: power[k] for k in ("rating", "rank", "accuracy", "events", "wins", "solved")},
+                   "shards": save["meta"]["shards"]},
+        "tree": ctx["tree"],
+        "perTag": per_tag,
+        "run": run_view,
+        "meta": {"upgrades": rogue.public_upgrades(save), "history": save["meta"]["history"],
+                 "bounties": save["meta"]["bounties"], "runs": save["meta"].get("runs_started", 0)},
+        "relics": rogue.public_relics(),
+        "nodeTypes": {k: v["name"] for k, v in rogue.NODE_TYPES.items()},
+        "picks": picks,
+        "recent": solved_recent,
+        "library": {"total": len(problems), "playable": sum(1 for p in problems if engine.playable(p)),
+                    "allDifficulties": any(p.get("difficulty") != "Easy" for p in problems)},
+        "login": bool(cfg.get("session") and cfg.get("csrftoken") and "貼上" not in cfg.get("session", "")),
+        "events": events,
+    }
+
+
+def find(slug):
+    problems, _ = load_world()
+    for p in problems:
+        if p["slug"] == slug:
+            return p
+    return lc.find_problem(slug)
+
+
+def captured(fn, *a, **kw):
+    """執行 lc.py 的指令並把它印出來的文字收集起來。"""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn(*a, **kw)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# API
+# ---------------------------------------------------------------------------
+def api(path, body, query):
+    with LOCK:
+        save = load_save()
+        problems, records = load_world()
+
+        if path == "/api/state":
+            return build_state(save)
+
+        if path == "/api/problem":
+            slug = (query.get("slug") or [""])[0]
+            p = find(slug)
+            q = lc.fetch_question_detail(p["slug"])
+            snippet = lc.get_python_snippet(q)
+            return {
+                **problem_brief(p, records), "html": q.get("content") or "",
+                "examples": q.get("exampleTestcases") or "", "snippet": snippet,
+                "url": f"{lc.BASE}/problems/{p['slug']}/",
+                "cnUrl": f"https://leetcode.cn/problems/{p['slug']}/",
+            }
+
+        if path == "/api/open":
+            p = find(body["slug"])
+            fpath, created = lc.create_solution(p)
+            how = open_in_editor(fpath)
+            return {"file": str(fpath.relative_to(lc.ROOT)), "created": created, "opened": how}
+
+        if path == "/api/test":
+            p = find(body["slug"])
+            if not lc.solution_path(p).exists():
+                lc.create_solution(p)
+            res = lc.run_test(p, body.get("input") or None)
+            return {"result": slim(res)}
+
+        if path == "/api/submit":
+            p = find(body["slug"])
+            res, ok = lc.run_submit(p)
+            return {"result": slim(res), "accepted": ok, **build_state(load_save())}
+
+        if path == "/api/sync":
+            out = captured(lc.cmd_sync, type("A", (), {"all": False})())
+            return {"log": out, **build_state(save)}
+
+        if path == "/api/fetch":
+            out = captured(lc.cmd_fetch, type("A", (), {"all": bool(body.get("all"))})())
+            return {"log": out, **build_state(save)}
+
+        if path == "/api/recommend":
+            ctx = context(problems, records)
+            return {"items": engine.recommend(
+                problems, records, ctx["tree"], ctx["power"], k=int(body.get("k", 5)),
+                tag=body.get("tag"), seen=save["meta"]["ads_seen"], seed=body.get("seed"))}
+
+        if path == "/api/ad":
+            ctx = context(problems, records)
+            items = engine.recommend(problems, records, ctx["tree"], ctx["power"], k=1,
+                                     seen=save["meta"]["ads_seen"],
+                                     exclude=set(save["meta"]["bounties"]))
+            if items:
+                save["meta"]["ads_seen"] = (save["meta"]["ads_seen"] + [items[0]["slug"]])[-40:]
+                write_save(save)
+            return {"ad": items[0] if items else None}
+
+        if path == "/api/bounty":
+            ctx = context(problems, records)
+            p = find(body["slug"])
+            rec = {"slug": p["slug"], "title": p["title"], "difficulty": p["difficulty"],
+                   "xp": engine.DIFF_XP.get(p["difficulty"], 10)}
+            rogue.accept_bounty(save, rec)
+            write_save(save)
+            fpath, _ = lc.create_solution(p)
+            open_in_editor(fpath)
+            return build_state(save, [{"kind": "bountyAccepted", "title": p["title"]}])
+
+        if path.startswith("/api/run/") or path == "/api/upgrade":
+            ctx = context(problems, records)
+            events = []
+            if path == "/api/run/start":
+                if save.get("run") and save["run"]["status"] == "active":
+                    raise ValueError("遠征還在進行中")
+                rogue.start_run(save)
+            elif path == "/api/run/enter":
+                events = rogue.enter(save, body["key"], ctx)
+            elif path == "/api/run/choose":
+                p = find(body["slug"])
+                fpath, _ = lc.create_solution(p)  # 先建檔，失敗就不算開戰
+                rogue.choose(save, body["slug"])
+                open_in_editor(fpath)
+            elif path == "/api/run/reroll":
+                events = rogue.reroll(save, ctx)
+            elif path == "/api/run/flee":
+                events = rogue.flee(save)
+            elif path == "/api/run/act":
+                events = rogue.act(save, body.get("action"), body.get("arg"))
+            elif path == "/api/run/abandon":
+                events = rogue.abandon(save)
+            elif path == "/api/run/clear":
+                if save.get("run") and save["run"]["status"] != "active":
+                    save["run"] = None
+            elif path == "/api/upgrade":
+                rogue.buy_upgrade(save, body["id"])
+            write_save(save)
+            return build_state(save, events)
+
+        raise LookupError("沒有這個 API")
+
+
+def slim(res):
+    keep = ("status_msg", "code_answer", "expected_code_answer", "compile_error", "full_compile_error",
+            "runtime_error", "full_runtime_error", "total_correct", "total_testcases", "status_runtime",
+            "status_memory", "last_testcase", "code_output", "expected_output", "std_output_list",
+            "correct_answer", "_input")
+    return {k: res.get(k) for k in keep if res.get(k) not in (None, "", [])}
+
+
+# ---------------------------------------------------------------------------
+# HTTP
+# ---------------------------------------------------------------------------
+MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+        ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png"}
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "HappyLeetGame/1.0"
+
+    def log_message(self, fmt, *args):  # 安靜一點
+        pass
+
+    def _send(self, code, data, ctype="application/json; charset=utf-8"):
+        body = data if isinstance(data, bytes) else json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _static(self, rel):
+        f = (STATIC / rel).resolve()
+        if STATIC.resolve() not in f.parents or not f.is_file():
+            return self._send(404, {"error": "找不到"})
+        data = f.read_bytes()
+        if f.name == "index.html":
+            data = data.replace(b"__GAME_TOKEN__", TOKEN.encode())
+        self._send(200, data, MIME.get(f.suffix, "application/octet-stream"))
+
+    def _handle(self, method):
+        u = urlparse(self.path)
+        if not u.path.startswith("/api/"):
+            return self._static("index.html" if u.path in ("/", "") else u.path.lstrip("/"))
+        if self.headers.get("X-Game-Token") != TOKEN:
+            return self._send(403, {"error": "權杖不符，請重新整理頁面"})
+        body = {}
+        if method == "POST":
+            n = int(self.headers.get("Content-Length") or 0)
+            if n:
+                try:
+                    body = json.loads(self.rfile.read(n).decode("utf-8"))
+                except ValueError:
+                    return self._send(400, {"error": "JSON 格式錯誤"})
+        try:
+            self._send(200, api(u.path, body, parse_qs(u.query)))
+        except SystemExit as e:
+            self._send(400, {"error": str(e.code).strip()})
+        except (ValueError, KeyError, IndexError) as e:
+            self._send(400, {"error": str(e)})
+        except LookupError as e:
+            self._send(404, {"error": str(e)})
+        except lc.requests.RequestException as e:
+            self._send(502, {"error": f"連不到 LeetCode：{e}"})
+        except Exception as e:  # noqa: BLE001
+            self._send(500, {"error": f"{type(e).__name__}: {e}"})
+
+    def do_GET(self):
+        self._handle("GET")
+
+    def do_POST(self):
+        self._handle("POST")
+
+
+def serve(port=8765, open_browser=True):
+    if not lc.PROBLEMS_PATH.exists():
+        print("📥 第一次啟動，先抓題目清單…")
+        lc.cmd_fetch(type("A", (), {"all": False})())
+    httpd = None
+    for p in range(port, port + 10):
+        try:
+            httpd = ThreadingHTTPServer(("127.0.0.1", p), Handler)
+            port = p
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        sys.exit(f"❌ {port}~{port + 9} 的埠都被占用了，用 --port 換一個試試。")
+    url = f"http://localhost:{port}/"
+    print("🎮 開心每日刷題 · 遊戲模式啟動！")
+    print(f"   網址：{url}")
+    print("   在 VS Code 裡：Ctrl+Shift+P → 輸入 Simple Browser: Show → 貼上網址，就能邊寫邊玩")
+    print("   關閉：在這個終端機按 Ctrl+C")
+    if open_browser:
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n👋 下次見！")
+    finally:
+        httpd.server_close()

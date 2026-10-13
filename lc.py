@@ -13,6 +13,7 @@
     5. test    用題目附的範例測資在線上跑跑看（不算正式提交）
     6. submit  真的把程式碼送到 LeetCode 官方判題，結果寫回 data/records.json
     7. stats   看你刷了幾題
+    8. game    🎮 開啟刷題遊戲（技能樹、戰力分析、肉鴿遠征）
 
 用法範例：
     python lc.py fetch                # 第一次先抓題目清單
@@ -158,7 +159,9 @@ def cmd_fetch(args):
     all_questions = []
     skip = 0
     page = 50
-    print("📥 正在抓取 LeetCode 簡單題清單…")
+    scope = getattr(args, "all", False)
+    filters = {} if scope else {"difficulty": "EASY"}
+    print("📥 正在抓取 LeetCode " + ("全部難度" if scope else "簡單題") + "清單…")
     while True:
         data = graphql(
             session,
@@ -167,7 +170,7 @@ def cmd_fetch(args):
                 "categorySlug": "",
                 "skip": skip,
                 "limit": page,
-                "filters": {"difficulty": "EASY"},
+                "filters": filters,
             },
         )
         block = data["problemsetQuestionList"]
@@ -200,7 +203,8 @@ def cmd_fetch(args):
     problems.sort(key=lambda p: int(p["id"]))
     save_json(PROBLEMS_PATH, problems)
     free = sum(1 for p in problems if not p["paidOnly"])
-    print(f"✅ 完成！共 {len(problems)} 題簡單題（其中 {free} 題免費），存到 {PROBLEMS_PATH}")
+    kind = "題" if scope else "題簡單題"
+    print(f"✅ 完成！共 {len(problems)} {kind}（其中 {free} 題免費），存到 {PROBLEMS_PATH}")
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +220,10 @@ def get_problems():
 def find_problem(key: str):
     problems = get_problems()
     key = str(key).strip()
+    # 容錯：接受解題檔檔名，例如 0001-two-sum 或 0001-two-sum.py（VS Code 工作用）
+    m = re.match(r"^0*(\d+)-([a-z0-9-]+?)(\.py)?$", key)
+    if m:
+        key = m.group(2)
     for p in problems:
         if p["id"] == key or p["slug"] == key:
             return p
@@ -336,13 +344,12 @@ def get_python_snippet(q: dict) -> str:
     return q["codeSnippets"][0]["code"] if q["codeSnippets"] else ""
 
 
-def cmd_new(args):
-    p = find_problem(args.problem)
+def create_solution(p: dict, force: bool = False):
+    """建立解題檔。回傳 (路徑, 是否新建)。已存在且沒有 force 就不動它。"""
     q = fetch_question_detail(p["slug"])
     path = solution_path(p)
-    if path.exists() and not args.force:
-        print(f"⚠️  檔案已存在：{path}\n   （要覆蓋請加 --force）")
-        return
+    if path.exists() and not force:
+        return path, False
 
     snippet = get_python_snippet(q)
     header = (
@@ -355,11 +362,21 @@ def cmd_new(args):
         f"#\n"
         f"# 提示：可先用 `python lc.py show {p['id']}` 看完整題目。\n"
         f"# 寫完後用 `python lc.py test {p['id']}` 試跑、`python lc.py submit {p['id']}` 提交。\n"
+        f"# 🎮 遊戲模式：在遊戲畫面按「試招／出招」，或在 VS Code 按 Ctrl+Shift+B 直接提交這個檔案。\n"
         f"{META_END}\n"
     )
     SOLUTIONS_DIR.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(header + snippet + "\n")
+    return path, True
+
+
+def cmd_new(args):
+    p = find_problem(args.problem)
+    path, created = create_solution(p, force=args.force)
+    if not created:
+        print(f"⚠️  檔案已存在：{path}\n   （要覆蓋請加 --force）")
+        return
     print(f"✅ 已建立解題檔：{path}")
     print("   打開它，把你的解法寫在標記底下就可以了。")
 
@@ -411,28 +428,36 @@ def poll_check(session: requests.Session, check_id: str, slug: str) -> dict:
 # ---------------------------------------------------------------------------
 # 5. test — 用範例測資線上試跑（interpret，不算正式提交）
 # ---------------------------------------------------------------------------
-def cmd_test(args):
-    p = find_problem(args.problem)
+def run_test(p: dict, data_input=None) -> dict:
+    """線上試跑，回傳 LeetCode 的判題結果（dict）。"""
     q = fetch_question_detail(p["slug"])
     qid, lang, code, _ = read_solution(p)
     session = make_session(require_login=True)
-
-    data_input = args.input if args.input else q["exampleTestcases"]
-    print(f"🧪 用範例測資試跑第 {p['id']} 題（{p['title']}）…")
-    print(f"   測資：\n{data_input}\n")
-
+    data_input = data_input if data_input else q["exampleTestcases"]
     resp = session.post(
         f"{BASE}/problems/{p['slug']}/interpret_solution/",
         json={"lang": lang, "question_id": qid, "typed_code": code, "data_input": data_input},
         headers={"Referer": f"{BASE}/problems/{p['slug']}/"},
         timeout=30,
     )
+    if resp.status_code == 403:
+        sys.exit("❌ 被拒絕（403）。多半是登入資訊過期了，請更新 config.json。")
     resp.raise_for_status()
     interpret_id = resp.json().get("interpret_id")
     if not interpret_id:
         sys.exit(f"❌ 試跑失敗：{resp.text}")
-
     result = poll_check(session, interpret_id, p["slug"])
+    result["_input"] = data_input
+    return result
+
+
+def cmd_test(args):
+    p = find_problem(args.problem)
+    q = fetch_question_detail(p["slug"])
+    data_input = args.input if args.input else q["exampleTestcases"]
+    print(f"🧪 用範例測資試跑第 {p['id']} 題（{p['title']}）…")
+    print(f"   測資：\n{data_input}\n")
+    result = run_test(p, data_input)
     print(" " * 30, end="\r")
     _print_run_result(result, is_test=True)
 
@@ -475,12 +500,10 @@ def _print_run_result(result: dict, is_test: bool):
 # ---------------------------------------------------------------------------
 # 6. submit — 正式提交判題
 # ---------------------------------------------------------------------------
-def cmd_submit(args):
-    p = find_problem(args.problem)
+def run_submit(p: dict):
+    """正式提交並寫進 records.json。回傳 (判題結果, 是否通過)。"""
     qid, lang, code, _ = read_solution(p)
     session = make_session(require_login=True)
-
-    print(f"🚀 正在提交第 {p['id']} 題（{p['title']}）到 LeetCode…")
     resp = session.post(
         f"{BASE}/problems/{p['slug']}/submit/",
         json={"lang": lang, "question_id": qid, "typed_code": code},
@@ -495,11 +518,17 @@ def cmd_submit(args):
         sys.exit(f"❌ 提交失敗：{resp.text}")
 
     result = poll_check(session, str(submission_id), p["slug"])
-    print(" " * 30, end="\r")
-    _print_run_result(result, is_test=False)
-
     accepted = result.get("status_msg") == "Accepted"
     record_submission(p, lang, submission_id, result, accepted)
+    return result, accepted
+
+
+def cmd_submit(args):
+    p = find_problem(args.problem)
+    print(f"🚀 正在提交第 {p['id']} 題（{p['title']}）到 LeetCode…")
+    result, accepted = run_submit(p)
+    print(" " * 30, end="\r")
+    _print_run_result(result, is_test=False)
     if accepted:
         print("🎉 通過了！紀錄已更新。繼續加油！")
     else:
@@ -752,8 +781,8 @@ def cmd_push(args):
     # 5) 產生解題清單並把該追蹤的檔案加進來
     n = generate_solved_md()
     print(f"📝 已更新 SOLVED.md（已解 {n} 題）")
-    for path in ["solutions", "data/records.json", "data/problems.json",
-                 "SOLVED.md", "README.md", "lc.py", "requirements.txt",
+    for path in ["solutions", "data/records.json", "data/problems.json", "data/game.json",
+                 "game", "SOLVED.md", "README.md", "lc.py", "requirements.txt",
                  "config.example.json", ".gitignore"]:
         if (ROOT / path).exists():
             git("add", path)
@@ -873,15 +902,19 @@ def cmd_sync(args):
         f"(簡單 {ac.get('Easy', 0)} / 中等 {ac.get('Medium', 0)} / 困難 {ac.get('Hard', 0)})"
     )
 
-    # 3) 掃過所有簡單題，看哪些 status == 'ac'（已解出）
-    print("🔄 正在比對簡單題的完成狀態…")
+    # 3) 掃過題庫，看哪些 status == 'ac'（已解出）
+    #    題庫裡有中等/困難題（fetch --all）或加了 --all，就掃全部難度
+    known = load_json(PROBLEMS_PATH, [])
+    scan_all = getattr(args, "all", False) or any(p.get("difficulty") != "Easy" for p in known)
+    filters = {} if scan_all else {"difficulty": "EASY"}
+    print("🔄 正在比對" + ("全部難度" if scan_all else "簡單題") + "的完成狀態…")
     solved_easy = {}  # slug -> 題目資料
     skip, page = 0, 50
     while True:
         data = graphql(
             session,
             PROBLEM_LIST_QUERY,
-            {"categorySlug": "", "skip": skip, "limit": page, "filters": {"difficulty": "EASY"}},
+            {"categorySlug": "", "skip": skip, "limit": page, "filters": filters},
         )
         block = data["problemsetQuestionList"]
         questions = block["questions"]
@@ -922,7 +955,7 @@ def cmd_sync(args):
         slug = sub["titleSlug"]
         rec = records.get(slug)
         if rec is None:
-            continue  # 不是簡單題（中等/困難），略過
+            continue  # 不在掃描範圍內的題目，略過
         sid = int(sub["id"])
         if any(a.get("submission_id") == sid for a in rec["attempts"]):
             continue
@@ -942,7 +975,7 @@ def cmd_sync(args):
 
     save_json(RECORDS_PATH, records)
     print(
-        f"✅ 同步完成！簡單題已解 {len(solved_easy)} 題"
+        f"✅ 同步完成！已解 {len(solved_easy)} 題"
         f"（本次新標記 {new_solved} 題），併入最近 AC 紀錄 {added_attempts} 筆。"
     )
     print("   用 python lc.py stats 看整理後的進度，或 python lc.py list --undone 找還沒寫的題目。")
@@ -974,6 +1007,38 @@ def cmd_stats(args):
 
 
 # ---------------------------------------------------------------------------
+# 12. game — 開啟刷題遊戲
+# ---------------------------------------------------------------------------
+def cmd_game(args):
+    from game.server import serve
+    serve(port=args.port, open_browser=not args.no_browser)
+
+
+# ---------------------------------------------------------------------------
+# 13. vscode — 安裝 VS Code 任務（Ctrl+Shift+B 提交、打開資料夾自動開遊戲）
+# ---------------------------------------------------------------------------
+def cmd_vscode(args):
+    import shutil
+    src = ROOT / "game" / "vscode"
+    dst = ROOT / ".vscode"
+    dst.mkdir(exist_ok=True)
+    for name in ("tasks.json", "extensions.json"):
+        target = dst / name
+        if target.exists() and not args.force:
+            print(f"⚠️  {target} 已經存在，沒有覆蓋（要覆蓋請加 --force）")
+            continue
+        shutil.copyfile(src / name, target)
+        print(f"✅ 已安裝 {target}")
+    print(
+        "\n裝好了！重新打開這個資料夾後：\n"
+        "   • VS Code 會問「允許自動任務？」→ 允許，之後打開資料夾就自動啟動遊戲\n"
+        "   • Ctrl+Shift+B：提交目前打開的解題檔（出招）\n"
+        "   • Ctrl+Shift+P → Tasks: Run Test Task：試跑目前的解題檔（試招）\n"
+        "   不想自動啟動：把 .vscode/tasks.json 裡的 \"runOn\": \"folderOpen\" 那行刪掉就好。"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 命令列介面
 # ---------------------------------------------------------------------------
 def build_parser():
@@ -983,7 +1048,8 @@ def build_parser():
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("fetch", help="抓取簡單題清單")
+    pf = sub.add_parser("fetch", help="抓取簡單題清單")
+    pf.add_argument("--all", action="store_true", help="抓全部難度（簡單＋中等＋困難），技能樹會長得更完整")
 
     pl = sub.add_parser("list", help="列出題目與完成狀態")
     pl.add_argument("--undone", action="store_true", help="只看還沒解出的")
@@ -1016,13 +1082,21 @@ def build_parser():
     pr.add_argument("--done", action="store_true", help="也納入已解過的題")
     pr.add_argument("--new", action="store_true", help="抽完直接建立解題檔")
 
-    sub.add_parser("sync", help="從 LeetCode 抓回你的真實進度（需登入）")
+    psy = sub.add_parser("sync", help="從 LeetCode 抓回你的真實進度（需登入）")
+    psy.add_argument("--all", action="store_true", help="掃描全部難度（題庫有中等/困難題時會自動開啟）")
 
     pg = sub.add_parser("push", help="把解過的題目推上 GitHub")
     pg.add_argument("--repo", help="GitHub 倉庫網址（第一次設定用）")
     pg.add_argument("-m", "--message", help="自訂 commit 訊息")
 
     sub.add_parser("stats", help="看刷題進度")
+
+    pgm = sub.add_parser("game", help="🎮 開啟刷題遊戲（技能樹、戰力、肉鴿遠征）")
+    pgm.add_argument("--port", type=int, default=8765, help="本機埠號（預設 8765）")
+    pgm.add_argument("--no-browser", action="store_true", help="不要自動開瀏覽器")
+
+    pvs = sub.add_parser("vscode", help="安裝 VS Code 任務（Ctrl+Shift+B 提交、自動開遊戲）")
+    pvs.add_argument("--force", action="store_true", help="覆蓋已存在的設定")
     return parser
 
 
@@ -1041,6 +1115,8 @@ def main():
         "sync": cmd_sync,
         "push": cmd_push,
         "stats": cmd_stats,
+        "game": cmd_game,
+        "vscode": cmd_vscode,
     }
     if not args.command:
         parser.print_help()

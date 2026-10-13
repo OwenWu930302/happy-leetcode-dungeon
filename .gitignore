@@ -9,3 +9,6 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+
+# Claude Code 本機設定
+.claude/

@@ -65,5 +65,24 @@
       }
     ],
     "solved_at": "2026-06-06 23:50:48"
+  },
+  "truncate-sentence": {
+    "id": "1816",
+    "title": "Truncate Sentence",
+    "difficulty": "Easy",
+    "solved": true,
+    "attempts": [
+      {
+        "time": "2026-06-07 00:37:50",
+        "status": "Accepted",
+        "passed": "72/72",
+        "runtime": "0 ms",
+        "memory": "19.3 MB",
+        "lang": "python3",
+        "submission_id": 2024542514,
+        "accepted": true
+      }
+    ],
+    "solved_at": "2026-06-07 00:37:50"
   }
 }
