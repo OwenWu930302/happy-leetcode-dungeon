@@ -7,8 +7,8 @@
                     - 已知標籤：用手寫的前置關係
                     - 新標籤：用「共現機率」推斷前置技能，保證不會產生環
                     - Kahn 拓撲排序算層數，重心法（barycenter）排版減少交叉
-2. compute_power()  類 Elo 戰力：依提交紀錄逐筆更新總戰力與各技能戰力
-3. recommend()      依戰力與技能弱點，替每題打分，挑出「剛好打得贏」的題目
+2. compute_power()  實力分（看解過最難的幾題）、段位、戰力、各技能實力
+3. recommend()      依實力分與技能弱點，替每題打分，挑出「剛好打得贏」的題目
 """
 
 import math
@@ -93,17 +93,27 @@ TAG_INFO = {
 # 不是 Python 演算法題（要寫 SQL / Bash / 多執行緒），不放進技能樹與推薦
 EXCLUDED_TAGS = {"database", "shell", "concurrency"}
 
-DIFF_BASE = {"Easy": 1150, "Medium": 1550, "Hard": 1950}
 DIFF_PTS = {"Easy": 1, "Medium": 2, "Hard": 3}
 DIFF_XP = {"Easy": 10, "Medium": 25, "Hard": 50}
 
 # 技能等級門檻（加權解題分數：簡單 1、中等 2、困難 3）
 LEVEL_STEPS = [2, 5, 9, 14, 20]
 
-RANKS = [
-    (0, "青銅"), (1100, "白銀"), (1300, "黃金"), (1500, "白金"),
-    (1700, "鑽石"), (1900, "大師"), (2100, "傳說"),
+# 段位：跟 LeetCode 競賽分同一個尺度（Knight 約 1850、Guardian 約 2200）
+# 每一階再分 IV、III、II、I 四個小段
+TIERS = [
+    (0, "青銅"), (1200, "白銀"), (1400, "黃金"), (1600, "白金"), (1800, "鑽石"),
+    (2000, "大師"), (2200, "宗師"), (2400, "傳說"), (2700, "神話"),
 ]
+DIVS = ["IV", "III", "II", "I"]
+
+# 社群題目難度表（zerotrac/leetcode_problem_rating）：slug → 難度分。由 lc.py 下載後設定。
+RATINGS = {}
+
+
+def set_ratings(table):
+    global RATINGS
+    RATINGS = dict(table or {})
 
 
 def playable(p):
@@ -112,18 +122,44 @@ def playable(p):
 
 
 def problem_rating(p):
-    """估計題目難度分：官方難度定基準，通過率越低越難。"""
-    base = DIFF_BASE.get(p.get("difficulty"), 1300)
+    """題目難度分（跟 LeetCode 競賽分同尺度）。
+
+    有收錄在社群難度表（競賽題）就直接用；沒有的話，用官方難度與通過率估計。
+    估計公式是拿社群難度表裡的簡單題回歸出來的（誤差約 ±85 分）。
+    """
+    r = RATINGS.get(p.get("slug"))
+    if r:
+        return int(round(r))
     ac = p.get("acRate") or 50
-    return int(round(base + (50 - ac) * 10))
+    d = p.get("difficulty")
+    if d == "Easy":
+        est = 1454 - 2.64 * ac
+    elif d == "Medium":
+        est = 1950 - 6.0 * ac
+    else:
+        est = 2550 - 12.0 * ac
+    return int(round(est))
+
+
+def rank_info(rating):
+    """段位：回傳 (名稱含小段, 階名, 下一段的名稱, 還差幾分)。"""
+    i = max(k for k, (lo, _) in enumerate(TIERS) if rating >= lo)
+    lo, name = TIERS[i]
+    if i == len(TIERS) - 1:
+        return {"rank": name, "tier": name, "next": None, "need": 0}
+    hi = TIERS[i + 1][0]
+    lo = max(lo, 1000) if i == 0 else lo
+    step = (hi - lo) / 4
+    div = min(3, max(0, int((rating - lo) // step)))
+    if div < 3:
+        nxt, need = f"{name} {DIVS[div + 1]}", lo + step * (div + 1) - rating
+    else:
+        nxt, need = f"{TIERS[i + 1][1]} {DIVS[0]}", hi - rating
+    return {"rank": f"{name} {DIVS[div]}", "tier": name, "next": nxt, "need": int(max(1, round(need)))}
 
 
 def rank_of(rating):
-    name = RANKS[0][1]
-    for lo, n in RANKS:
-        if rating >= lo:
-            name = n
-    return name
+    return rank_info(rating)["rank"]
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +296,7 @@ def build_tree(problems, records):
 
 
 # ---------------------------------------------------------------------------
-# 2. 戰力（類 Elo）
+# 2. 實力分、段位、戰力
 # ---------------------------------------------------------------------------
 def _events(problems_by_slug, records):
     """把提交紀錄攤平成時間序列的 (時間, 題目, 是否通過)。"""
@@ -278,47 +314,71 @@ def _events(problems_by_slug, records):
     return evs
 
 
-def _elo(events, start=1000.0):
-    R, n = start, 0
-    for _, p, win in events:
-        pr = problem_rating(p)
-        expect = 1 / (1 + 10 ** ((pr - R) / 400))
-        k = 48 if n < 15 else 32 if n < 50 else 20
-        R += k * ((1 if win else 0) - expect)
-        n += 1
-    return R, n
+def skill_from(ratings, k=10, prior=1000.0, shrink=3.0):
+    """實力分：看你解掉的「最難的那幾題」。
+
+    取難度最高的 k 題做加權平均（越難權重越高），再依解題數往新手基準 1000 打折。
+    跟解題順序無關，狂刷簡單題也不會灌分；解過 2800 分的題目，實力分就會接近 2800。
+    """
+    if not ratings:
+        return prior
+    top = sorted(ratings, reverse=True)[:k]
+    w = [0.85 ** i for i in range(len(top))]
+    peak = sum(r * x for r, x in zip(top, w)) / sum(w)
+    n = len(ratings)
+    return prior + (peak - prior) * n / (n + shrink)
 
 
-def compute_power(problems, records):
+def power_score(ratings):
+    """戰力：會一直成長的遊戲數字。每題貢獻 (難度分/1000)^3 × 100，越難的題目加越多。"""
+    return int(round(sum((r / 1000) ** 3 * 100 for r in ratings)))
+
+
+def compute_power(problems, records, contest=None):
     by_slug = {p["slug"]: p for p in problems}
     evs = _events(by_slug, records)
-    R, n = _elo(evs)
-    per_tag = {}
-    tags = defaultdict(list)
-    for e in evs:
-        for t in e[1].get("tags", []):
-            if t not in EXCLUDED_TAGS:
-                tags[t].append(e)
-    for t, es in tags.items():
-        # 該技能的「超額表現」：實際勝率減去以總戰力預估的勝率，樣本少時打折
-        resid = 0.0
-        for _, p, win in es:
-            expect = 1 / (1 + 10 ** ((problem_rating(p) - R) / 400))
-            resid += (1 if win else 0) - expect
-        tn = len(es)
-        shrink = tn / (tn + 3)
-        per_tag[t] = {
-            "rating": int(round(R + 400 * (resid / tn) * shrink)),
-            "events": tn,
-            "wins": sum(1 for e in es if e[2]),
-        }
-    solved = [s for s, r in records.items() if r.get("solved")]
-    xp = sum(DIFF_XP.get((by_slug.get(s) or records[s]).get("difficulty", "Easy"), 10) for s in solved)
     wins = sum(1 for e in evs if e[2])
+
+    solved = []  # (slug, problem)
+    for slug, r in records.items():
+        if r.get("solved"):
+            p = by_slug.get(slug) or {"slug": slug, "difficulty": r.get("difficulty", "Easy"), "acRate": 50, "tags": []}
+            solved.append(p)
+    rated = [problem_rating(p) for p in solved]
+    est = skill_from(rated)
+
+    # 一次通過率微調（有足夠提交紀錄才算）：最多 ±40 分
+    tried = [e for e in evs if e[0]]
+    if len(tried) >= 10:
+        acc = sum(1 for e in tried if e[2]) / len(tried)
+        est += max(-40.0, min(40.0, (acc - 0.7) * 130))
+
+    official = None
+    if contest and contest.get("rating") and contest.get("attended", 0) >= 1:
+        official = int(round(contest["rating"]))
+    rating = max(est, official or 0)
+
+    per_tag = {}
+    tag_r = defaultdict(list)
+    for p in solved:
+        for t in p.get("tags", []):
+            if t not in EXCLUDED_TAGS:
+                tag_r[t].append(problem_rating(p))
+    for t, rs in tag_r.items():
+        # 技能實力分：只看這個技能的題目，取最難的 5 題，題數少時往 1000 打折
+        n = len(rs)
+        per_tag[t] = {"rating": int(round(skill_from(rs, k=5, shrink=2))), "events": n, "wins": n}
+
+    xp = sum(DIFF_XP.get(p.get("difficulty"), 10) for p in solved)
+    ri = rank_info(rating)
     return {
-        "rating": int(round(R)), "rank": rank_of(R), "events": n,
-        "wins": wins, "accuracy": round(wins / n * 100) if n else 0,
+        "rating": int(round(rating)), "estimate": int(round(est)), "official": official,
+        "contest": contest or None,
+        "rank": ri["rank"], "tier": ri["tier"], "nextRank": ri["next"], "needRank": ri["need"],
+        "power": power_score(rated), "hardest": max(rated) if rated else None,
+        "events": len(evs), "wins": wins, "accuracy": round(wins / len(evs) * 100) if evs else 0,
         "solved": len(solved), "xp": xp, "per_tag": per_tag,
+        "ratedBy": "zerotrac" if RATINGS else "estimate",
     }
 
 
@@ -359,12 +419,12 @@ def explain(p, pr, rating, why, tree_by_id):
             break
     for kind, t in why:
         if kind == "weak":
-            lines.append(f"你的「{tree_by_id[t]['name']}」戰力比平均低，補一下")
+            lines.append(f"你的「{tree_by_id[t]['name']}」實力比平均低，補一下")
             break
     if diff > 120:
-        lines.append(f"難度 {pr}，比你高 {diff}，打贏會大漲戰力")
+        lines.append(f"難度 {pr}，比你高 {diff}，打贏會提升實力分")
     elif diff > -60:
-        lines.append(f"難度 {pr}，跟你的戰力 {rating} 剛好勢均力敵")
+        lines.append(f"難度 {pr}，跟你的實力分 {rating} 剛好勢均力敵")
     else:
         lines.append(f"難度 {pr}，輕鬆拿經驗")
     return lines[:2]

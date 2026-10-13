@@ -125,7 +125,7 @@ const IDLE = [
   "今天的委託在酒館公告板上，挑一題暖身吧。",
   "遠征裡答錯會被怪物打，但<em>試招</em>不扣血，先試再出招！",
   "技能樹會跟著題庫自己長大，遇到新標籤就會冒出新技能喔。",
-  "我會偷偷看你的戰力，挑剛好打得贏的題目推給你。",
+  "我會偷偷看你的實力分，挑剛好打得贏的題目推給你。",
   "寫完記得按<em>出招</em>，或在 VS Code 按 Ctrl+Shift+B 提交。",
 ];
 
@@ -268,8 +268,9 @@ function renderHud() {
   $("#hName").textContent = profile().name || "";
   $("#hLv").textContent = p.level;
   $("#hTitle").textContent = p.title;
-  $("#hPow").textContent = p.rating;
+  $("#hPow").textContent = (p.power || 0).toLocaleString("en-US");
   $("#hRank").textContent = p.rank;
+  $("#hPowBox").title = `實力分 ${p.rating}${p.official ? `（官方競賽分 ${p.official}）` : ""}`;
   $("#hShards").textContent = p.shards;
   const pct = Math.max(0, Math.min(100, ((p.xp - p.base) / (p.next - p.base)) * 100));
   $("#hXp").style.width = pct + "%";
@@ -310,7 +311,7 @@ function renderHome() {
     <div class="panel">
       <div class="eyebrow">今日委託 · Daily Quests</div>
       <h2>${esc(profile().companion || "露緹")}替你挑的三題</h2>
-      <p class="muted" style="margin:0 0 12px">依你的戰力 ${S.player.rating} 和技能樹的弱點挑的，難度剛好在你「努力一下打得贏」的範圍。</p>
+      <p class="muted" style="margin:0 0 12px">依你的實力分 ${S.player.rating} 和技能樹的弱點挑的，難度剛好在你「努力一下打得贏」的範圍。</p>
       <div class="quests">${S.picks.map((q) => questCard(q)).join("") || `<div class="empty">題庫裡的題目都被你解完了！試試「擴充題庫」。</div>`}</div>
     </div>
     <div class="grid2">
@@ -568,7 +569,7 @@ function nodeInfo() {
       <div><b>${stateTxt}</b><span>狀態</span></div>
       <div><b>${n.solved} / ${n.total}</b><span>已解 / 題數</span></div>
       <div><b>${n.pts}${n.next ? ` / ${n.next}` : ""}</b><span>${n.next ? `升到 Lv${n.level + 1} 需要的分數` : "已滿級"}</span></div>
-      <div><b>${per ? per.rating : "—"}</b><span>這個技能的戰力</span></div>
+      <div><b>${per ? per.rating : "—"}</b><span>這個技能的實力分</span></div>
     </div>
     ${n.parents.length ? `<div class="row" style="margin-bottom:10px"><span class="muted">前置：</span>${n.parents.map((p) => `<button class="chip" data-node="${esc(p)}">${esc(nodeName(p))}</button>`).join("")}</div>` : ""}
     ${!n.unlocked ? `<div class="notice" style="margin-bottom:10px">先點亮前置技能。這裡解的題目會先記著，前置點亮的瞬間一起燃起來。</div>` : ""}
@@ -590,44 +591,54 @@ async function selectNode(id) {
 }
 
 /* ---------- 戰力 ---------- */
-const RANKS = [[0, "青銅"], [1100, "白銀"], [1300, "黃金"], [1500, "白金"], [1700, "鑽石"], [1900, "大師"], [2100, "傳說"]];
 const CORE = ["array", "string", "hash-table", "math", "two-pointers", "sorting", "stack", "binary-tree", "dynamic-programming", "greedy", "binary-search", "bit-manipulation"];
+const TIER_COLOR = { 青銅: "#c58a5a", 白銀: "#c9d1e3", 黃金: "#ffd27a", 白金: "#7fe0d4", 鑽石: "#8ab8ff", 大師: "#c49bff", 宗師: "#ff8a7a", 傳說: "#ffb347", 神話: "#ff6fd8" };
 
 function renderPower() {
   const el = $("#tab-power");
   const p = S.player;
-  const nextRank = RANKS.find(([lo]) => lo > p.rating);
   const tagMap = Object.fromEntries(S.perTag.map((t) => [t.id, t]));
   const present = new Set(S.tree.nodes.map((n) => n.id));
   let axes = S.perTag.filter((t) => t.events >= 1).sort((a, b) => b.events - a.events).slice(0, 8).map((t) => t.id);
   for (const c of CORE) if (axes.length < 6 && present.has(c) && !axes.includes(c)) axes.push(c);
   const rows = S.perTag.slice().sort((a, b) => b.rating - a.rating);
+  const col = TIER_COLOR[p.tier] || "var(--ember-hot)";
+  const c = p.contest;
+  const lo = Math.min(...rows.map((r) => r.rating), p.rating) - 100, hi = Math.max(...rows.map((r) => r.rating), p.rating) + 50;
   el.innerHTML = `
     <div class="panel power-hero">
       <div>
-        <div class="eyebrow">Combat Power</div>
-        <div class="big-num">${p.rating}</div>
-        <span class="rank-badge">${esc(p.rank)}</span>
+        <div class="eyebrow">Rank · 段位</div>
+        <div class="rank-big" style="color:${col};text-shadow:0 0 26px ${col}66">${esc(p.rank)}</div>
+        <div class="muted" style="margin-top:4px">實力分 <b class="mono" style="color:var(--parch);font-size:22px">${p.rating}</b></div>
+        ${p.nextRank ? `<div class="muted" style="font-size:12.5px">再 <b style="color:var(--ember-hot)">${p.needRank}</b> 分升上「${esc(p.nextRank)}」</div>` : `<div class="muted" style="font-size:12.5px">已達最高段位</div>`}
       </div>
       <div style="display:grid;gap:10px">
-        <p class="muted" style="margin:0">戰力用類 Elo 演算法算：每題依官方難度與通過率估一個難度分，你每次提交都像打一場對戰，打贏比你強的題目漲得多，答錯會扣。${nextRank ? `再漲 <b style="color:var(--ember-hot)">${nextRank[0] - p.rating}</b> 就升上「${nextRank[1]}」。` : "你已經是傳說了。"}</p>
         <div class="kv">
+          <div><b style="color:var(--ember-hot)">${(p.power || 0).toLocaleString("en-US")}</b><span>戰力（越難的題加越多）</span></div>
           <div><b>${p.solved}</b><span>已解題數</span></div>
-          <div><b>${p.events}</b><span>對戰次數</span></div>
-          <div><b>${p.accuracy}%</b><span>一次通過率</span></div>
-          <div><b>${p.level}</b><span>等級</span></div>
+          <div><b>${p.hardest ?? "—"}</b><span>解過最難的題</span></div>
+          <div><b>${p.official ?? "—"}</b><span>${p.official ? `官方競賽分${c && c.topPercentage ? `・前 ${c.topPercentage}%` : ""}` : "官方競賽分（同步後顯示）"}</span></div>
         </div>
+        <details><summary class="muted" style="cursor:pointer;font-size:13px">分數怎麼算？</summary>
+          <ul class="muted" style="font-size:13px;margin:8px 0 0;padding-left:20px;display:grid;gap:4px">
+            <li><b>題目難度分</b>：使用社群的 <a href="https://github.com/zerotrac/leetcode_problem_rating" target="_blank" rel="noopener">zerotrac 題目難度表</a>（跟 LeetCode 競賽分同尺度）${p.ratedBy === "zerotrac" ? "" : "，目前還沒下載成功，先用官方難度與通過率估計"}。沒收錄的題目用官方難度與通過率估計。</li>
+            <li><b>實力分</b>：取你解過最難的 10 題做加權平均，解題數少時往 1000 打折。跟刷題順序無關，狂刷簡單題不會灌分。</li>
+            <li><b>官方競賽分</b>：有參加 LeetCode 週賽的話，同步時會抓回來，實力分取兩者較高的那個。</li>
+            <li><b>段位</b>：青銅、白銀、黃金、白金、鑽石、大師、宗師、傳說、神話，每階分 IV～I。大約 1850 相當於 LeetCode 的 Knight、2200 相當於 Guardian。</li>
+            <li><b>戰力</b>：每題貢獻（難度分 ÷ 1000）³ × 100，會一直成長，越難的題目加越多。</li>
+          </ul></details>
       </div>
     </div>
     <div class="grid2">
       <div class="panel"><div class="eyebrow">Radar</div><h2>技能雷達</h2>
         <div class="radar-wrap">${radarSVG(axes, tagMap, p.rating)}</div>
-        <p class="muted" style="font-size:12.5px;margin:6px 0 0">外圈 ${radarRange[1]}、中心 ${radarRange[0]}。虛線是你的總戰力；還沒打過的技能先用總戰力代替（淡色）。</p></div>
-      <div class="panel"><div class="eyebrow">Breakdown</div><h2>各技能戰力</h2>
-        ${rows.length ? `<div class="tblwrap"><table class="tags"><thead><tr><th>技能</th><th>戰力</th><th></th><th>對戰</th></tr></thead><tbody>
+        <p class="muted" style="font-size:12.5px;margin:6px 0 0">外圈 ${radarRange[1]}、中心 ${radarRange[0]}。虛線是你的實力分；還沒解過的技能先用實力分代替（淡色）。</p></div>
+      <div class="panel"><div class="eyebrow">Breakdown</div><h2>各技能實力分</h2>
+        ${rows.length ? `<div class="tblwrap"><table class="tags"><thead><tr><th>技能</th><th>實力分</th><th></th><th>題數</th></tr></thead><tbody>
         ${rows.map((t) => `<tr><td><button class="chip" data-node-go="${esc(t.id)}">${esc(t.name)}</button></td><td class="n">${t.rating}</td>
-          <td><div class="bar"><i class="${t.rating >= p.rating ? "hi" : ""}" style="width:${Math.max(4, Math.min(100, ((t.rating - 800) / 1000) * 100))}%"></i></div></td><td class="n">${t.wins}/${t.events}</td></tr>`).join("")}
-        </tbody></table></div>` : `<div class="empty">還沒有提交紀錄。解一題就會出現！</div>`}
+          <td><div class="bar"><i class="${t.rating >= p.rating ? "hi" : ""}" style="width:${Math.max(4, Math.min(100, ((t.rating - lo) / (hi - lo)) * 100))}%"></i></div></td><td class="n">${t.events}</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="empty">還沒有解題紀錄。解一題就會出現！</div>`}
       </div>
     </div>`;
 }
@@ -891,7 +902,7 @@ function renderSettings() {
     <div class="panel">
       <div class="eyebrow">Companion</div>
       <h2>頭像與看板娘</h2>
-      <p class="muted" style="margin:4px 0 12px">選一位陪你刷題的看板娘，或上傳自己的圖片（PNG、JPG、GIF、WebP，6 MB 以內）。</p>
+      <p class="muted" style="margin:4px 0 12px">選一位陪你刷題的看板娘，或上傳自己的圖片（PNG、JPG、GIF、WebP，6 MB 以內）。<br><span style="font-size:12px">看板娘的圖像與名字由 AI 生成，如有雷同，純屬巧合。</span></p>
       ${avatarPicker(p)}
       <div class="fields" style="margin-top:14px">
         <label class="field">你的暱稱<input id="pfName" maxlength="24" value="${esc(p.name)}" placeholder="獵題人"></label>
@@ -933,7 +944,7 @@ function onboardingHTML() {
   if (obStep === 1) {
     return `<div class="eyebrow">Welcome · 1 / 2</div>
       <h2>歡迎來到 LeetCode 演算法地城</h2>
-      <p class="muted" style="margin:0">在這裡刷題會長出技能樹、累積戰力、打怪遠征。先選一位陪你冒險的看板娘吧。</p>
+      <p class="muted" style="margin:0">在這裡刷題會長出技能樹、提升段位、打怪遠征。先選一位陪你冒險的看板娘吧。</p>
       ${avatarPicker(p)}
       <div class="fields">
         <label class="field">你的暱稱<input id="obName" maxlength="24" value="${esc(p.name)}" placeholder="獵題人"></label>

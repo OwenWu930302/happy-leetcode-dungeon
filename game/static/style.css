@@ -306,3 +306,6 @@ body[data-bg="forest"],.bgsw[data-bg="forest"]{background:radial-gradient(900px 
 body[data-bg="plain"],.bgsw[data-bg="plain"]{background:#0c0e14}
 body[data-bg="upload"]{background-color:#0c0e14;background-size:cover;background-position:center;background-attachment:fixed}
 body[data-bg]{background-attachment:fixed}
+
+.rank-big{font-family:var(--f-display);font-weight:900;font-size:44px;line-height:1.1;letter-spacing:.04em;margin-top:4px;white-space:nowrap}
+.rank-badge{display:none}

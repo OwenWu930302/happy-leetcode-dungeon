@@ -1005,6 +1005,10 @@ def cmd_sync(args):
         sys.exit("❌ 登入資訊無效或已過期，請更新 config.json 裡的 LEETCODE_SESSION / csrftoken。")
     username = who["username"]
     print(f"👤 已登入：{username}")
+    c = fetch_contest(username)
+    if c and c.get("rating"):
+        print(f"🏆 官方競賽分：{round(c['rating'])}（參加 {c['attended']} 場，前 {c.get('topPercentage')}%）")
+    update_ratings()
 
     # 2) 各難度的解題統計
     stats = graphql(session, USER_STATS_QUERY, {"username": username})["matchedUser"]
@@ -1091,6 +1095,70 @@ def cmd_sync(args):
         f"（本次新標記 {new_solved} 題），併入最近 AC 紀錄 {added_attempts} 筆。"
     )
     print("   用 python lc.py stats 看整理後的進度，或 python lc.py list --undone 找還沒寫的題目。")
+
+
+# ---------------------------------------------------------------------------
+# 題目難度分與官方競賽分（給遊戲的戰力系統用）
+# ---------------------------------------------------------------------------
+RATINGS_URL = "https://raw.githubusercontent.com/zerotrac/leetcode_problem_rating/main/ratings.txt"
+CONTEST_QUERY = """
+query contest($username: String!) {
+  userContestRanking(username: $username) {
+    attendedContestsCount rating globalRanking topPercentage badge { name }
+  }
+}
+"""
+
+
+def ratings_path() -> Path:
+    return DATA_DIR / "ratings.json"
+
+
+def load_ratings() -> dict:
+    return (load_json(ratings_path(), {}) or {}).get("table", {})
+
+
+def update_ratings(max_age_days: float = 7) -> int:
+    """下載社群題目難度表（zerotrac/leetcode_problem_rating），一週更新一次。回傳題數，失敗回傳 0。"""
+    cur = load_json(ratings_path(), {}) or {}
+    if cur.get("table") and time.time() - cur.get("fetched", 0) < max_age_days * 86400:
+        return len(cur["table"])
+    try:
+        resp = requests.get(RATINGS_URL, timeout=20)
+        resp.raise_for_status()
+    except requests.RequestException:
+        return len(cur.get("table", {}))
+    table = {}
+    for line in resp.text.splitlines()[1:]:
+        cols = line.split("\t")
+        if len(cols) >= 5:
+            try:
+                table[cols[4]] = round(float(cols[0]), 1)
+            except ValueError:
+                pass
+    if table:
+        save_json(ratings_path(), {"fetched": time.time(), "source": RATINGS_URL, "table": table})
+    return len(table)
+
+
+def fetch_contest(username: str):
+    """抓官方競賽分（公開資料，不用登入）。存到 data/contest.json，失敗回傳 None。"""
+    try:
+        data = graphql(make_session(), CONTEST_QUERY, {"username": username})
+    except (requests.RequestException, RuntimeError):
+        return None
+    r = data.get("userContestRanking") or {}
+    info = {
+        "username": username,
+        "rating": r.get("rating"),
+        "attended": r.get("attendedContestsCount") or 0,
+        "globalRanking": r.get("globalRanking"),
+        "topPercentage": r.get("topPercentage"),
+        "badge": (r.get("badge") or {}).get("name"),
+        "fetched": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+    save_json(DATA_DIR / "contest.json", info)
+    return info
 
 
 # ---------------------------------------------------------------------------

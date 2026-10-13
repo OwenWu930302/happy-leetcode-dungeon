@@ -81,6 +81,7 @@ def logged_in(cfg):
 
 
 def save_login(sess, csrf, user, avatar):
+    threading.Thread(target=lambda: lc.fetch_contest(user), daemon=True).start()
     with LOCK:
         cfg = lc.load_config()
         cfg.update({"session": sess, "csrftoken": csrf})
@@ -116,8 +117,10 @@ def load_world():
 
 
 def context(problems, records):
+    if not engine.RATINGS:
+        engine.set_ratings(lc.load_ratings())
     tree = engine.build_tree(problems, records)
-    power = engine.compute_power(problems, records)
+    power = engine.compute_power(problems, records, contest=lc.load_json(lc.DATA_DIR / "contest.json", None))
     return {"problems": problems, "records": records, "tree": tree, "power": power}
 
 
@@ -228,7 +231,9 @@ def build_state(save, events=None):
         key=lambda x: x["at"], reverse=True)[:8]
 
     return {
-        "player": {**level_info(total_xp), **{k: power[k] for k in ("rating", "rank", "accuracy", "events", "wins", "solved")},
+        "player": {**level_info(total_xp), **{k: power[k] for k in (
+            "rating", "estimate", "official", "contest", "rank", "tier", "nextRank", "needRank", "power",
+            "hardest", "ratedBy", "accuracy", "events", "wins", "solved")},
                    "shards": save["meta"]["shards"]},
         "tree": ctx["tree"],
         "perTag": per_tag,
@@ -555,8 +560,16 @@ class Handler(BaseHTTPRequestHandler):
         self._handle("POST")
 
 
+def _refresh_ratings():
+    n = lc.update_ratings()
+    if n:
+        engine.set_ratings(lc.load_ratings())
+
+
 def serve(port=8765, open_browser=True):
     lc.ensure_home()
+    engine.set_ratings(lc.load_ratings())
+    threading.Thread(target=_refresh_ratings, daemon=True).start()
     if not lc.PROBLEMS_PATH.exists():
         print("📥 第一次啟動，先抓題目清單…")
         lc.cmd_fetch(type("A", (), {"all": False})())
