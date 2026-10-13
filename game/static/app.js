@@ -19,17 +19,42 @@ let prevLevel = 0;
 try { focusSlug = localStorage.getItem("focusSlug") || null; tab = localStorage.getItem("tab") || "home"; } catch (e) {}
 
 /* ================= API ================= */
-const OFFLINE_MSG = "連不到遊戲伺服器：遊戲的黑色視窗（或執行 python lc.py game 的終端機）可能被關掉了。請重新啟動遊戲，再從它打開的網頁操作。";
+const OFFLINE_MSG = "遊戲斷線了，請重新開啟遊戲後再試一次。";
+let offlineTimer = null, lastNetError = "";
+
 function setOffline(on) {
   let bar = document.getElementById("offline");
-  if (!on) { if (bar) bar.remove(); return; }
-  if (bar) return;
-  bar = document.createElement("div");
-  bar.id = "offline";
-  bar.className = "offline";
-  bar.innerHTML = `<b>遊戲伺服器沒有回應</b><span>${OFFLINE_MSG}</span><button class="btn" onclick="location.reload()">重新整理</button>`;
-  document.body.prepend(bar);
+  if (!on) {
+    if (bar) bar.remove();
+    clearInterval(offlineTimer); offlineTimer = null;
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "offline";
+    bar.className = "offline";
+    bar.setAttribute("role", "alert");
+    bar.innerHTML = `<div class="offline-main"><b>遊戲斷線了</b><span>請重新開啟遊戲後再試一次。<i class="offline-retry">正在自動重新連線…</i></span></div>
+      <details class="offline-tech"><summary>技術細節</summary>
+        <div>原始錯誤：<code id="offlineErr"></code></div>
+        <div>連線位址：<code>${esc(location.origin)}</code></div>
+        <div>可能原因：遊戲程式（LeetCodeDungeon.exe 的黑色視窗，或執行 <code>python lc.py game</code> 的終端機）被關閉，或電腦睡眠後連線中斷。</div>
+      </details>`;
+    document.body.prepend(bar);
+  }
+  bar.querySelector("#offlineErr").textContent = lastNetError || "Failed to fetch";
+  if (!offlineTimer) offlineTimer = setInterval(reconnect, 3000);
 }
+
+async function reconnect() {
+  let res;
+  try { res = await fetch("/api/state", { headers: { "X-Game-Token": TOKEN } }); } catch (e) { return; }
+  if (res.status === 403) return location.reload(); // 遊戲重新啟動過，換了新的連線權杖
+  if (!res.ok) return;
+  setOffline(false);
+  try { applyState(await res.json()); toast("info", "重新連上了"); } catch (e) {}
+}
+
 async function api(path, body) {
   const opt = { headers: { "X-Game-Token": TOKEN } };
   if (body !== undefined) {
@@ -41,11 +66,16 @@ async function api(path, body) {
   try {
     res = await fetch(path, opt);
   } catch (e) {
+    lastNetError = (e && e.message) || "Failed to fetch";
     setOffline(true);
     throw new Error(OFFLINE_MSG);
   }
-  setOffline(false);
-  if (res.status === 403) throw new Error("頁面跟遊戲伺服器對不上了（可能重新啟動過遊戲），請重新整理這個頁面。");
+  if (res.status === 403) {
+    // 遊戲重新啟動過：舊頁面的權杖失效，重新整理就好
+    toast("info", "遊戲重新啟動過了", "正在重新整理頁面…");
+    setTimeout(() => location.reload(), 1200);
+    throw new Error("正在重新整理頁面…");
+  }
   const data = await res.json().catch(() => ({ error: `伺服器回應怪怪的（${res.status}），請重新整理頁面。` }));
   if (!res.ok || data.error) throw new Error(data.error || `錯誤 ${res.status}`);
   return data;
@@ -59,7 +89,8 @@ async function act(path, body, busyText) {
     return st;
   } catch (e) {
     toast("info", "出了點狀況", e.message);
-    say(`唔……<em>${esc(e.message).slice(0, 80)}</em>`);
+    if (e.message !== OFFLINE_MSG) say(`唔……<em>${esc(e.message).slice(0, 80)}</em>`);
+    else say("連不上遊戲了……重新開啟遊戲後我就回來！");
     return null;
   } finally {
     if (busyText) busy(false);
@@ -152,6 +183,7 @@ const IDLE = [
 function busy(on, text) { $("#busy").hidden = !on; if (text) $("#busyTxt").textContent = text; }
 
 function toast(kind, title, text = "") {
+  if (text === OFFLINE_MSG || title === OFFLINE_MSG) return; // 斷線已經有上方提示條，不重複通知
   const t = document.createElement("div");
   t.className = `toast ${kind}`;
   t.innerHTML = `<b>${esc(title)}</b>${text ? `<span>${esc(text)}</span>` : ""}`;
