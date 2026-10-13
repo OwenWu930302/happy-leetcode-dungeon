@@ -243,6 +243,7 @@ class BrowserLogin:
             if ws is None:
                 raise RuntimeError("等不到登入視窗回應")
             last_session = None
+            net_errors = 0
             while time.time() < deadline:
                 if self.cancelled:
                     return
@@ -255,11 +256,19 @@ class BrowserLogin:
                 got = pick_cookies(cookies)
                 sess, csrf = got.get("LEETCODE_SESSION"), got.get("csrftoken")
                 if sess and csrf and sess != last_session:
-                    last_session = sess
                     try:
                         user, avatar = self.verify(sess, csrf)
+                        last_session = sess
                     except ValueError:
                         user = None  # cookie 還是未登入狀態，繼續等
+                        last_session = sess
+                    except Exception as e:  # noqa: BLE001  網路一時不穩：下一輪再試
+                        user = None
+                        net_errors += 1
+                        if net_errors >= 8:
+                            raise RuntimeError(f"一直連不到 LeetCode 確認登入狀態：{e}")
+                        self._set(state="waiting", browser=self.state.get("browser"),
+                                  message="已經拿到登入資訊，正在跟 LeetCode 確認中…")
                     if user:
                         on_success(sess, csrf, user, avatar)
                         self._set(state="ok", user=user)
