@@ -24,3 +24,6 @@ __pycache__/
 Thumbs.db
 .claude/
 .vscode/
+
+# 下載或打包出來的執行檔
+*.exe
