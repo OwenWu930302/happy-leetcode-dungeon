@@ -27,8 +27,10 @@
 
 import argparse
 import json
+import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -47,7 +49,28 @@ for _stream in (sys.stdout, sys.stderr):
 # ---------------------------------------------------------------------------
 # 路徑設定：所有資料都放在這支腳本旁邊，跨平台都能跑
 # ---------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parent
+# 程式本身的位置（打包成 EXE 時是解壓縮後的暫存資料夾）
+FROZEN = getattr(sys, "frozen", False)
+REPO_DIR = Path(__file__).resolve().parent
+APP_DIR = Path(getattr(sys, "_MEIPASS", REPO_DIR))
+
+
+def _default_home() -> Path:
+    """每位玩家自己的工作區：登入資訊、紀錄、解題檔、遊戲存檔都放這裡，不會進到開源 repo。
+
+    - 設了環境變數 LCD_HOME 就用它
+    - 打包成 EXE：文件/LeetCodeDungeon
+    - 從原始碼執行：專案底下的 workspace/（已被 .gitignore 排除）
+    """
+    env = os.environ.get("LCD_HOME")
+    if env:
+        return Path(env).expanduser().resolve()
+    if FROZEN:
+        return Path.home() / "Documents" / "LeetCodeDungeon"
+    return REPO_DIR / "workspace"
+
+
+ROOT = _default_home()
 DATA_DIR = ROOT / "data"
 SOLUTIONS_DIR = ROOT / "solutions"
 CONFIG_PATH = ROOT / "config.json"
@@ -57,8 +80,47 @@ RECORDS_PATH = DATA_DIR / "records.json"
 BASE = "https://leetcode.com"
 GRAPHQL = f"{BASE}/graphql"
 
-# 解題檔裡用來分隔「設定」與「你的程式碼」的標記
-META_END = "# === 以下是你的程式碼 (YOUR CODE BELOW) ==="
+# 解題檔裡用來分隔「設定」與「你的程式碼」的標記（前面會加上該語言的註解符號）
+MARK = "=== 以下是你的程式碼 (YOUR CODE BELOW) ==="
+META_END = "# " + MARK  # 舊版相容
+
+# 支援的語言：LeetCode langSlug → (副檔名, 註解符號, 顯示名稱)
+LANGS = {
+    "python3": (".py", "#", "Python 3"),
+    "cpp": (".cpp", "//", "C++"),
+    "java": (".java", "//", "Java"),
+    "javascript": (".js", "//", "JavaScript"),
+    "typescript": (".ts", "//", "TypeScript"),
+    "c": (".c", "//", "C"),
+    "csharp": (".cs", "//", "C#"),
+    "golang": (".go", "//", "Go"),
+    "rust": (".rs", "//", "Rust"),
+    "kotlin": (".kt", "//", "Kotlin"),
+}
+
+
+def ensure_home():
+    """第一次執行時建立工作區，並把舊版放在專案根目錄的個人資料搬進來。"""
+    ROOT.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    moved = []
+    # 只有用預設工作區（專案底下的 workspace/）時才搬，設了 LCD_HOME 就不碰專案資料夾
+    if not FROZEN and ROOT == REPO_DIR / "workspace" and not (DATA_DIR / "records.json").exists():
+        legacy = ["config.json", "data/records.json", "data/game.json", "data/profile.json",
+                  "data/details", "solutions", "pdf", "SOLVED.md"]
+        for rel in legacy:
+            src, dst = REPO_DIR / rel, ROOT / rel
+            if src.exists() and not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
+                moved.append(rel)
+    if moved:
+        print(f"📦 已把你的個人資料搬到工作區 {ROOT}：{', '.join(moved)}")
+    # 題庫：工作區沒有就從程式內建的種子複製一份，第一次啟動不用等抓題
+    seed = APP_DIR / "data" / "problems.json"
+    if not (DATA_DIR / "problems.json").exists() and seed.exists():
+        shutil.copyfile(seed, DATA_DIR / "problems.json")
+    return moved
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +283,7 @@ def find_problem(key: str):
     problems = get_problems()
     key = str(key).strip()
     # 容錯：接受解題檔檔名，例如 0001-two-sum 或 0001-two-sum.py（VS Code 工作用）
-    m = re.match(r"^0*(\d+)-([a-z0-9-]+?)(\.py)?$", key)
+    m = re.match(r"^0*(\d+)-([a-z0-9-]+?)(\.[a-z]+)?$", key)
     if m:
         key = m.group(2)
     for p in problems:
@@ -332,40 +394,64 @@ def cmd_show(args):
 # ---------------------------------------------------------------------------
 # 4. new — 建立解題檔
 # ---------------------------------------------------------------------------
-def solution_path(p: dict) -> Path:
-    return SOLUTIONS_DIR / f"{int(p['id']):04d}-{p['slug']}.py"
+def default_lang() -> str:
+    lang = load_config().get("lang") or "python3"
+    return lang if lang in LANGS else "python3"
+
+
+def solution_path(p: dict, lang: str = None) -> Path:
+    """解題檔路徑。沒指定語言時，優先找已經存在的檔案（任何語言），否則用設定的語言。"""
+    stem = f"{int(p['id']):04d}-{p['slug']}"
+    if lang is None:
+        for code, (ext, _, _) in LANGS.items():
+            f = SOLUTIONS_DIR / (stem + ext)
+            if f.exists():
+                return f
+        lang = default_lang()
+    return SOLUTIONS_DIR / (stem + LANGS.get(lang, LANGS["python3"])[0])
+
+
+def get_snippet(q: dict, lang: str = "python3") -> str:
+    for snip in q["codeSnippets"] or []:
+        if snip["langSlug"] == lang:
+            return snip["code"]
+    return ""
 
 
 def get_python_snippet(q: dict) -> str:
-    for snip in q["codeSnippets"]:
-        if snip["langSlug"] == "python3":
-            return snip["code"]
-    # 萬一沒有 python3，退而求其次
-    return q["codeSnippets"][0]["code"] if q["codeSnippets"] else ""
+    return get_snippet(q, "python3") or (q["codeSnippets"][0]["code"] if q["codeSnippets"] else "")
 
 
-def create_solution(p: dict, force: bool = False):
+def create_solution(p: dict, force: bool = False, lang: str = None):
     """建立解題檔。回傳 (路徑, 是否新建)。已存在且沒有 force 就不動它。"""
+    existing = solution_path(p)
+    if existing.exists() and not force:
+        return existing, False
+    lang = lang or default_lang()
     q = fetch_question_detail(p["slug"])
-    path = solution_path(p)
-    if path.exists() and not force:
-        return path, False
-
-    snippet = get_python_snippet(q)
-    header = (
-        f"# {q['questionFrontendId']}. {q['title']}  [{q['difficulty']}]\n"
-        f"# {BASE}/problems/{p['slug']}/\n"
-        f"#\n"
-        f"# meta-slug: {p['slug']}\n"
-        f"# meta-qid: {q['questionId']}\n"
-        f"# meta-lang: python3\n"
-        f"#\n"
-        f"# 提示：可先用 `python lc.py show {p['id']}` 看完整題目。\n"
-        f"# 寫完後用 `python lc.py test {p['id']}` 試跑、`python lc.py submit {p['id']}` 提交。\n"
-        f"# 🎮 遊戲模式：在遊戲畫面按「試招／出招」，或在 VS Code 按 Ctrl+Shift+B 直接提交這個檔案。\n"
-        f"{META_END}\n"
-    )
+    snippet = get_snippet(q, lang)
+    if not snippet:
+        lang, snippet = "python3", get_python_snippet(q)
+    ext, c, _ = LANGS[lang]
+    path = solution_path(p, lang)
+    header = "\n".join([
+        f"{c} {q['questionFrontendId']}. {q['title']}  [{q['difficulty']}]",
+        f"{c} {BASE}/problems/{p['slug']}/",
+        f"{c}",
+        f"{c} meta-slug: {p['slug']}",
+        f"{c} meta-qid: {q['questionId']}",
+        f"{c} meta-lang: {lang}",
+        f"{c}",
+        f"{c} 寫完後在遊戲畫面按「試招／出招」，或在 VS Code 按 Ctrl+Shift+B 直接提交這個檔案。",
+        f"{c} 指令版：python lc.py test {p['id']}（試跑）、python lc.py submit {p['id']}（提交）",
+        f"{c} {MARK}",
+    ]) + "\n"
     SOLUTIONS_DIR.mkdir(parents=True, exist_ok=True)
+    if force:
+        for code, (e, _, _) in LANGS.items():  # 換語言重建時，清掉其他語言的舊檔
+            old = solution_path(p, code)
+            if old != path and old.exists():
+                old.unlink()
     with open(path, "w", encoding="utf-8") as f:
         f.write(header + snippet + "\n")
     return path, True
@@ -373,7 +459,7 @@ def create_solution(p: dict, force: bool = False):
 
 def cmd_new(args):
     p = find_problem(args.problem)
-    path, created = create_solution(p, force=args.force)
+    path, created = create_solution(p, force=args.force, lang=args.lang)
     if not created:
         print(f"⚠️  檔案已存在：{path}\n   （要覆蓋請加 --force）")
         return
@@ -394,17 +480,17 @@ def read_solution(p: dict):
     raw = path.read_text(encoding="utf-8")
     meta = {}
     for line in raw.splitlines():
-        m = re.match(r"#\s*meta-(\w+):\s*(.+)", line)
+        m = re.match(r"\s*(?:#|//)\s*meta-(\w+):\s*(.+)", line)
         if m:
             meta[m.group(1)] = m.group(2).strip()
 
-    if META_END in raw:
-        code = raw.split(META_END, 1)[1].lstrip("\n")
-    else:
-        code = raw  # 沒有標記就整份送
+    lines = raw.splitlines(keepends=True)
+    cut = next((i for i, l in enumerate(lines) if MARK in l), None)
+    code = "".join(lines[cut + 1:]) if cut is not None else raw  # 沒有標記就整份送
 
     qid = meta.get("qid") or p.get("questionId")
-    lang = meta.get("lang", "python3")
+    ext_lang = next((k for k, v in LANGS.items() if path.suffix == v[0]), "python3")
+    lang = meta.get("lang", ext_lang)
     if not code.strip():
         sys.exit("❌ 你的程式碼是空的，先寫點東西再提交吧 :)")
     return qid, lang, code, path
@@ -730,7 +816,7 @@ def generate_solved_md():
     lines = [
         "# 我的 LeetCode 解題紀錄",
         "",
-        f"目前已解出 **{len(solved)}** 題簡單題。最後更新："
+        f"目前已解出 **{len(solved)}** 題。最後更新："
         f"{datetime.now().strftime('%Y-%m-%d')}",
         "",
         "| # | 題目 | 難度 | 解出時間 | 我的解答 |",
@@ -739,8 +825,9 @@ def generate_solved_md():
     for r in solved:
         slug = next((s for s, v in records.items() if v is r), None)
         link = f"https://leetcode.com/problems/{slug}/"
-        sol_file = f"solutions/{int(r['id']):04d}-{slug}.py"
-        sol_link = f"[解答]({sol_file})" if (ROOT / sol_file).exists() else "—"
+        sp = solution_path({"id": r["id"], "slug": slug})
+        sol_file = sp.relative_to(ROOT).as_posix()
+        sol_link = f"[解答]({sol_file})" if sp.exists() else "—"
         lines.append(
             f"| {r['id']} | [{r['title']}]({link}) | {r['difficulty']} "
             f"| {r.get('solved_at', r.get('solved_via', '—'))} | {sol_link} |"
@@ -750,10 +837,27 @@ def generate_solved_md():
     return len(solved)
 
 
+WORKSPACE_GITIGNORE = """# 絕對不要上傳：你的 LeetCode 登入 cookie
+config.json
+
+# 快取與雜物
+data/details/
+data/_imgcache/
+data/problems.json
+pdf/
+assets/
+.vscode/
+"""
+
+
 def cmd_push(args):
+    """把你的工作區（解題檔、紀錄、遊戲存檔）備份到你自己的 GitHub 倉庫。"""
     # 1) 一定要先有 .gitignore，否則可能把 config.json（登入 cookie）推上去
-    if not (ROOT / ".gitignore").exists():
-        sys.exit("❌ 找不到 .gitignore。為了安全請先建立它（至少要忽略 config.json）。")
+    gi = ROOT / ".gitignore"
+    if not gi.exists():
+        gi.write_text(WORKSPACE_GITIGNORE, encoding="utf-8")
+    elif "config.json" not in gi.read_text(encoding="utf-8").split():
+        sys.exit("❌ 工作區的 .gitignore 沒有排除 config.json，為了安全先不推送。")
 
     # 2) 還不是 git repo 就初始化
     if not (ROOT / ".git").exists():
@@ -781,9 +885,8 @@ def cmd_push(args):
     # 5) 產生解題清單並把該追蹤的檔案加進來
     n = generate_solved_md()
     print(f"📝 已更新 SOLVED.md（已解 {n} 題）")
-    for path in ["solutions", "data/records.json", "data/problems.json", "data/game.json",
-                 "game", "SOLVED.md", "README.md", "lc.py", "requirements.txt",
-                 "config.example.json", ".gitignore"]:
+    for path in ["solutions", "data/records.json", "data/game.json", "data/profile.json",
+                 "SOLVED.md", ".gitignore"]:
         if (ROOT / path).exists():
             git("add", path)
 
@@ -805,7 +908,8 @@ def cmd_push(args):
             "   (A) 已經有空的 GitHub repo：\n"
             "       python lc.py push --repo https://github.com/你的帳號/倉庫名.git\n"
             "   (B) 用 gh CLI 一鍵建立（需先在終端機執行一次 gh auth login）：\n"
-            "       gh repo create leetcode-practice --public --source . --remote origin --push"
+            f"       cd \"{ROOT}\"\n"
+            "       gh repo create my-leetcode-solutions --private --source . --remote origin --push"
         )
         return
 
@@ -853,7 +957,7 @@ def cmd_random(args):
     print(f"   {BASE}/problems/{p['slug']}/\n")
 
     if args.new:
-        cmd_new(argparse.Namespace(problem=str(p["id"]), force=False))
+        cmd_new(argparse.Namespace(problem=str(p["id"]), force=False, lang=None))
     else:
         print(f"   下一步：python lc.py show {p['id']}　|　python lc.py new {p['id']}")
 
@@ -1017,20 +1121,50 @@ def cmd_game(args):
 # ---------------------------------------------------------------------------
 # 13. vscode — 安裝 VS Code 任務（Ctrl+Shift+B 提交、打開資料夾自動開遊戲）
 # ---------------------------------------------------------------------------
+def vscode_tasks() -> dict:
+    """依執行方式產生 VS Code 任務：EXE 版呼叫 EXE，原始碼版呼叫 python lc.py。"""
+    if FROZEN:
+        run = f'"{sys.executable}"'
+    else:
+        run = f'python "{REPO_DIR / "lc.py"}"'
+    shared = {"reveal": "always", "panel": "shared", "clear": True}
+    return {
+        "version": "2.0.0",
+        "tasks": [
+            {"label": "🎮 開心刷題：開始遊戲", "type": "shell", "command": f"{run} game",
+             "isBackground": True, "problemMatcher": [],
+             "presentation": {"reveal": "always", "panel": "dedicated", "focus": False},
+             "runOptions": {"runOn": "folderOpen"}},
+            {"label": "🚀 出招：提交目前這題", "type": "shell",
+             "command": f"{run} submit ${{fileBasenameNoExtension}}",
+             "group": {"kind": "build", "isDefault": True}, "problemMatcher": [], "presentation": shared},
+            {"label": "🧪 試招：用範例測資試跑目前這題", "type": "shell",
+             "command": f"{run} test ${{fileBasenameNoExtension}}",
+             "group": {"kind": "test", "isDefault": True}, "problemMatcher": [], "presentation": shared},
+            {"label": "🔄 同步官網進度", "type": "shell", "command": f"{run} sync", "problemMatcher": []},
+        ],
+    }
+
+
+def install_vscode(force=False, target: Path = None):
+    """在工作區（或指定資料夾）安裝 .vscode/tasks.json。回傳寫入的路徑，已存在且不覆蓋時回傳 None。"""
+    dst = (target or ROOT) / ".vscode"
+    dst.mkdir(parents=True, exist_ok=True)
+    f = dst / "tasks.json"
+    if f.exists() and not force:
+        return None
+    save_json(f, vscode_tasks())
+    return f
+
+
 def cmd_vscode(args):
-    import shutil
-    src = ROOT / "game" / "vscode"
-    dst = ROOT / ".vscode"
-    dst.mkdir(exist_ok=True)
-    for name in ("tasks.json", "extensions.json"):
-        target = dst / name
-        if target.exists() and not args.force:
-            print(f"⚠️  {target} 已經存在，沒有覆蓋（要覆蓋請加 --force）")
-            continue
-        shutil.copyfile(src / name, target)
-        print(f"✅ 已安裝 {target}")
+    f = install_vscode(force=args.force)
+    if f is None:
+        print(f"⚠️  {ROOT / '.vscode' / 'tasks.json'} 已經存在，沒有覆蓋（要覆蓋請加 --force）")
+        return
+    print(f"✅ 已安裝 {f}")
     print(
-        "\n裝好了！重新打開這個資料夾後：\n"
+        f"\n用 VS Code 打開工作區資料夾：{ROOT}\n"
         "   • VS Code 會問「允許自動任務？」→ 允許，之後打開資料夾就自動啟動遊戲\n"
         "   • Ctrl+Shift+B：提交目前打開的解題檔（出招）\n"
         "   • Ctrl+Shift+P → Tasks: Run Test Task：試跑目前的解題檔（試招）\n"
@@ -1063,6 +1197,7 @@ def build_parser():
     pn = sub.add_parser("new", help="建立解題檔")
     pn.add_argument("problem", help="題號或 slug")
     pn.add_argument("--force", action="store_true", help="覆蓋已存在的檔案")
+    pn.add_argument("--lang", choices=list(LANGS), help="解題語言（預設用 config.json 的 lang）")
 
     pt = sub.add_parser("test", help="用範例測資線上試跑（不算正式提交）")
     pt.add_argument("problem", help="題號或 slug")
@@ -1085,8 +1220,8 @@ def build_parser():
     psy = sub.add_parser("sync", help="從 LeetCode 抓回你的真實進度（需登入）")
     psy.add_argument("--all", action="store_true", help="掃描全部難度（題庫有中等/困難題時會自動開啟）")
 
-    pg = sub.add_parser("push", help="把解過的題目推上 GitHub")
-    pg.add_argument("--repo", help="GitHub 倉庫網址（第一次設定用）")
+    pg = sub.add_parser("push", help="把你的工作區（解題檔、紀錄、存檔）備份到你自己的 GitHub 倉庫")
+    pg.add_argument("--repo", help="你的個人備份倉庫網址（第一次設定用）")
     pg.add_argument("-m", "--message", help="自訂 commit 訊息")
 
     sub.add_parser("stats", help="看刷題進度")
@@ -1095,7 +1230,7 @@ def build_parser():
     pgm.add_argument("--port", type=int, default=8765, help="本機埠號（預設 8765）")
     pgm.add_argument("--no-browser", action="store_true", help="不要自動開瀏覽器")
 
-    pvs = sub.add_parser("vscode", help="安裝 VS Code 任務（Ctrl+Shift+B 提交、自動開遊戲）")
+    pvs = sub.add_parser("vscode", help="在工作區安裝 VS Code 任務（Ctrl+Shift+B 提交、自動開遊戲）")
     pvs.add_argument("--force", action="store_true", help="覆蓋已存在的設定")
     return parser
 
@@ -1118,8 +1253,10 @@ def main():
         "game": cmd_game,
         "vscode": cmd_vscode,
     }
+    ensure_home()
     if not args.command:
         parser.print_help()
+        print(f"\n工作區：{ROOT}")
         return
     try:
         handlers[args.command](args)

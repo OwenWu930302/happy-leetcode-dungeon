@@ -271,3 +271,38 @@ body.shake main{animation:shake .4s}
 }
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 .tab > *, .panel, .grid2 > *{min-width:0}
+
+/* ---------- 頭像、背景、設定 ---------- */
+.hud-mascot{background:none;border:0;padding:0;border-radius:50%;cursor:pointer}
+.hud-mascot img{width:64px;height:64px;border-radius:50%;object-fit:cover;display:block;border:2px solid var(--line);box-shadow:0 4px 10px rgba(0,0,0,.5)}
+.hud-mascot:hover svg,.hud-mascot:hover img{filter:brightness(1.1) drop-shadow(0 0 8px rgba(255,210,122,.5))}
+#hName:not(:empty)::after{content:"·";margin:0 6px;color:var(--ash)}
+.avatars{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px}
+.av{display:grid;justify-items:center;gap:4px;padding:8px 4px;border-radius:12px;border:1px solid var(--line);background:#10131c;font-size:12.5px;color:var(--parch-dim)}
+.av svg,.av img{width:64px;height:64px;border-radius:50%;object-fit:cover}
+.av[aria-pressed="true"]{border-color:var(--ember-hot);box-shadow:0 0 0 1px var(--ember-hot),0 0 16px rgba(233,171,71,.3);color:var(--ember-hot)}
+.av.up{border-style:dashed;place-content:center;min-height:100px}
+.av.up span:first-child{font-size:26px;line-height:1;color:var(--ash)}
+.bgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}
+.bgsw{height:70px;border-radius:10px;border:1px solid var(--line);display:flex;align-items:flex-end;padding:6px 8px;font-size:12px;color:#fff;text-shadow:0 1px 3px #000;background-size:cover;background-position:center}
+.bgsw[aria-pressed="true"]{border-color:var(--ember-hot);box-shadow:0 0 0 1px var(--ember-hot)}
+.field{display:grid;gap:4px;font-size:13px;color:var(--ash)}
+.field input,.field select{background:#090b10;border:1px solid var(--line);border-radius:9px;color:var(--parch);padding:8px 10px;font:inherit;font-size:14px;min-width:0;width:100%}
+.field input:focus,.field select:focus{border-color:var(--ember);outline:none}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.steps{margin:0;padding-left:20px;font-size:13.5px;color:var(--parch-dim);display:grid;gap:3px}
+.steps code{font-family:var(--f-mono);color:var(--ember-hot);background:#1a1f2c;padding:0 4px;border-radius:4px}
+.lc-user{display:flex;align-items:center;gap:12px}
+.lc-user img{width:48px;height:48px;border-radius:50%;border:1px solid var(--line)}
+.path{font-family:var(--f-mono);font-size:12.5px;background:#090b10;border:1px solid var(--line);border-radius:8px;padding:6px 10px;overflow-wrap:anywhere}
+input[type=range]{accent-color:var(--ember)}
+
+body[data-bg="dungeon"],.bgsw[data-bg="dungeon"]{background:radial-gradient(1000px 600px at 20% -10%,#1a2133 0%,transparent 60%),radial-gradient(800px 600px at 110% 30%,#1b1626 0%,transparent 55%),#0c0e14}
+body[data-bg="starry"],.bgsw[data-bg="starry"]{background:radial-gradient(1.5px 1.5px at 12% 22%,#fff8,transparent 60%),radial-gradient(1px 1px at 72% 12%,#fffa,transparent 60%),radial-gradient(1.5px 1.5px at 42% 64%,#fff6,transparent 60%),radial-gradient(1px 1px at 88% 48%,#fff9,transparent 60%),radial-gradient(1px 1px at 25% 82%,#fff7,transparent 60%),radial-gradient(1.5px 1.5px at 60% 35%,#cfe3ffaa,transparent 60%),radial-gradient(900px 500px at 70% 0%,#1d2a52 0%,transparent 65%),linear-gradient(180deg,#0a0f22,#070912);background-size:220px 220px,300px 300px,260px 260px,340px 340px,280px 280px,380px 380px,auto,auto}
+body[data-bg="sakura"],.bgsw[data-bg="sakura"]{background:radial-gradient(900px 520px at 85% -10%,#4a1f3a 0%,transparent 60%),radial-gradient(700px 500px at 0% 100%,#3a1a33 0%,transparent 60%),#140c14}
+body[data-bg="abyss"],.bgsw[data-bg="abyss"]{background:radial-gradient(900px 600px at 50% -20%,#0f3a48 0%,transparent 60%),radial-gradient(700px 500px at 100% 100%,#0b2a3a 0%,transparent 60%),#070f14}
+body[data-bg="ember"],.bgsw[data-bg="ember"]{background:radial-gradient(1000px 500px at 50% 110%,#4a1a0c 0%,transparent 60%),radial-gradient(600px 400px at 0% 0%,#2a1410 0%,transparent 60%),#100a08}
+body[data-bg="forest"],.bgsw[data-bg="forest"]{background:radial-gradient(900px 600px at 20% -10%,#163322 0%,transparent 60%),radial-gradient(700px 500px at 100% 80%,#10261c 0%,transparent 60%),#08100c}
+body[data-bg="plain"],.bgsw[data-bg="plain"]{background:#0c0e14}
+body[data-bg="upload"]{background-color:#0c0e14;background-size:cover;background-position:center;background-attachment:fixed}
+body[data-bg]{background-attachment:fixed}

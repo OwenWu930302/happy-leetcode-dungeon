@@ -10,10 +10,12 @@ http://localhost:8765 就是遊戲畫面；畫面上的按鈕會呼叫這裡的 
 遊戲存檔：data/game.json
 """
 
+import base64
 import contextlib
 import io
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -25,14 +27,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import lc  # noqa: E402
 from game import engine, rogue  # noqa: E402
 
-STATIC = Path(__file__).resolve().parent / "static"
+STATIC = lc.APP_DIR / "game" / "static"
 SAVE_PATH = lc.DATA_DIR / "game.json"
+PROFILE_PATH = lc.DATA_DIR / "profile.json"
+ASSET_DIR = lc.ROOT / "assets"
+MAX_UPLOAD = 6 * 1024 * 1024
+IMAGE_MAGIC = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpg", b"GIF8": "gif", b"RIFF": "webp"}
+BACKGROUNDS = ["dungeon", "starry", "sakura", "abyss", "ember", "forest", "plain"]
+PROFILE_DEFAULT = {"name": "", "companion": "露緹", "avatar": "p0", "bg": "dungeon", "dim": 0.55,
+                   "onboarded": False, "lcUser": None, "lcAvatar": None, "uploads": {}}
 TOKEN = secrets.token_urlsafe(16)
 LOCK = threading.RLock()
 
@@ -54,6 +62,37 @@ def load_save():
 
 def write_save(save):
     lc.save_json(SAVE_PATH, save)
+
+
+def load_profile():
+    prof = dict(PROFILE_DEFAULT)
+    prof.update(lc.load_json(PROFILE_PATH, {}) or {})
+    return prof
+
+
+def save_profile(prof):
+    lc.save_json(PROFILE_PATH, prof)
+
+
+def logged_in(cfg):
+    sess = cfg.get("session") or ""
+    return bool(sess and cfg.get("csrftoken") and "貼上" not in sess)
+
+
+def verify_login(session_cookie, csrftoken):
+    """用 cookie 問 LeetCode「我是誰」。回傳 (username, avatar)，失敗丟 ValueError。"""
+    s = lc.requests.Session()
+    s.headers.update({"User-Agent": "Mozilla/5.0", "Content-Type": "application/json",
+                      "Origin": lc.BASE, "Referer": lc.BASE + "/", "x-csrftoken": csrftoken})
+    s.cookies.set("LEETCODE_SESSION", session_cookie, domain="leetcode.com")
+    s.cookies.set("csrftoken", csrftoken, domain="leetcode.com")
+    try:
+        who = lc.graphql(s, "query { userStatus { username isSignedIn avatar } }", {})["userStatus"]
+    except RuntimeError:
+        who = lc.graphql(s, "query { userStatus { username isSignedIn } }", {})["userStatus"]
+    if not who or not who.get("isSignedIn"):
+        raise ValueError("LeetCode 說這組 cookie 沒有登入，可能複製錯了或已過期，重新複製一次試試。")
+    return who.get("username"), who.get("avatar")
 
 
 def load_world():
@@ -87,28 +126,31 @@ def level_info(xp):
 # VS Code
 # ---------------------------------------------------------------------------
 def code_line(path: Path) -> int:
-    """游標要停的行：解題標記之後，第一個 def 的下一行。"""
+    """游標要停的行：程式碼標記之後，最後一個函式宣告的下一行（Python、C++、Java… 都適用）。"""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return 1
-    start = next((i for i, l in enumerate(lines) if lc.META_END in l), 0)
-    defs = [i for i, l in enumerate(lines) if i > start and l.strip().startswith("def ")]
-    return (defs[-1] + 2) if defs else start + 2
+    start = next((i for i, l in enumerate(lines) if lc.MARK in l), 0)
+    sigs = [i for i, l in enumerate(lines)
+            if i > start and "(" in l and l.rstrip().endswith((":", "{"))
+            and not l.strip().startswith(("class", "struct", "impl", "if", "for", "while"))]
+    return (sigs[-1] + 2) if sigs else start + 2
 
 
-def open_in_editor(path: Path):
-    line = code_line(path)
-    target = f"{path}:{line}"
+def open_in_editor(path: Path, line=None):
+    line = line or (code_line(path) if path.is_file() else None)
+    target = f"{path}:{line}" if line else str(path)
     code = shutil.which("code") or shutil.which("code.cmd")
     if code:
         try:
-            subprocess.Popen([code, "-r", "-g", target], cwd=str(ROOT),
+            args = [code, "-r", "-g", target] if line else [code, target]
+            subprocess.Popen(args, cwd=str(lc.ROOT),
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return "vscode"
         except OSError:
             pass
-    uri = "vscode://file/" + str(path).replace("\\", "/") + f":{line}"
+    uri = "vscode://file/" + str(path).replace("\\", "/") + (f":{line}" if line else "")
     try:
         if os.name == "nt":
             os.startfile(uri)  # type: ignore[attr-defined]
@@ -182,7 +224,14 @@ def build_state(save, events=None):
         "recent": solved_recent,
         "library": {"total": len(problems), "playable": sum(1 for p in problems if engine.playable(p)),
                     "allDifficulties": any(p.get("difficulty") != "Easy" for p in problems)},
-        "login": bool(cfg.get("session") and cfg.get("csrftoken") and "貼上" not in cfg.get("session", "")),
+        "login": logged_in(cfg),
+        "profile": {k: v for k, v in load_profile().items()},
+        "langs": [{"id": k, "name": v[2]} for k, v in lc.LANGS.items()],
+        "lang": lc.default_lang(),
+        "workspace": str(lc.ROOT),
+        "frozen": lc.FROZEN,
+        "vscodeInstalled": (lc.ROOT / ".vscode" / "tasks.json").exists(),
+        "backgrounds": BACKGROUNDS,
         "events": events,
     }
 
@@ -213,6 +262,97 @@ def api(path, body, query):
 
         if path == "/api/state":
             return build_state(save)
+
+        if path == "/api/profile":
+            prof = load_profile()
+            for k in ("name", "companion"):
+                if k in body:
+                    prof[k] = str(body[k]).strip()[:24]
+            if "avatar" in body:
+                av = str(body["avatar"])
+                if av == "upload" and not prof["uploads"].get("avatar"):
+                    raise ValueError("還沒有上傳頭像")
+                if av != "upload" and not re.fullmatch(r"p\d{1,2}", av):
+                    raise ValueError("沒有這個頭像")
+                prof["avatar"] = av
+            if "bg" in body:
+                bg = str(body["bg"])
+                if bg != "upload" and bg not in BACKGROUNDS:
+                    raise ValueError("沒有這個背景")
+                if bg == "upload" and not prof["uploads"].get("bg"):
+                    raise ValueError("還沒有上傳背景圖")
+                prof["bg"] = bg
+            if "dim" in body:
+                prof["dim"] = max(0.0, min(0.9, float(body["dim"])))
+            if "onboarded" in body:
+                prof["onboarded"] = bool(body["onboarded"])
+            if "lang" in body:
+                if body["lang"] not in lc.LANGS:
+                    raise ValueError("不支援這個語言")
+                cfg = lc.load_config()
+                cfg["lang"] = body["lang"]
+                lc.save_json(lc.CONFIG_PATH, cfg)
+            save_profile(prof)
+            return build_state(save)
+
+        if path == "/api/upload":
+            kind = body.get("kind")
+            if kind not in ("avatar", "bg"):
+                raise ValueError("只能上傳頭像或背景")
+            data = str(body.get("data", ""))
+            raw = base64.b64decode(data.split(",", 1)[-1], validate=False)
+            if len(raw) > MAX_UPLOAD:
+                raise ValueError("圖片太大了，請小於 6 MB")
+            ext = next((e for m, e in IMAGE_MAGIC.items() if raw.startswith(m)), None)
+            if not ext or (ext == "webp" and raw[8:12] != b"WEBP"):
+                raise ValueError("只支援 PNG、JPG、GIF、WebP 圖片")
+            ASSET_DIR.mkdir(parents=True, exist_ok=True)
+            for old in ASSET_DIR.glob(f"{kind}.*"):
+                old.unlink()
+            (ASSET_DIR / f"{kind}.{ext}").write_bytes(raw)
+            prof = load_profile()
+            prof["uploads"][kind] = f"{ext}?v={secrets.token_hex(4)}"
+            prof["avatar" if kind == "avatar" else "bg"] = "upload"
+            save_profile(prof)
+            return build_state(save)
+
+        if path == "/api/login":
+            sess = str(body.get("session", "")).strip().strip('"')
+            csrf = str(body.get("csrftoken", "")).strip().strip('"')
+            if len(sess) < 20 or len(csrf) < 10:
+                raise ValueError("兩個欄位都要貼上完整的 cookie 值")
+            user, avatar = verify_login(sess, csrf)
+            cfg = lc.load_config()
+            cfg.update({"session": sess, "csrftoken": csrf})
+            cfg.setdefault("lang", "python3")
+            lc.save_json(lc.CONFIG_PATH, cfg)
+            prof = load_profile()
+            prof["lcUser"], prof["lcAvatar"] = user, avatar
+            if not prof["name"]:
+                prof["name"] = user
+            save_profile(prof)
+            return build_state(save, [{"kind": "login", "user": user}])
+
+        if path == "/api/logout":
+            cfg = lc.load_config()
+            cfg.pop("session", None)
+            cfg.pop("csrftoken", None)
+            lc.save_json(lc.CONFIG_PATH, cfg)
+            prof = load_profile()
+            prof["lcUser"], prof["lcAvatar"] = None, None
+            save_profile(prof)
+            return build_state(save)
+
+        if path == "/api/workspace/open":
+            how = open_in_editor(lc.ROOT)
+            if how == "none" and os.name == "nt":
+                os.startfile(str(lc.ROOT))  # type: ignore[attr-defined]
+                how = "explorer"
+            return {"opened": how, "path": str(lc.ROOT)}
+
+        if path == "/api/vscode/install":
+            f = lc.install_vscode(force=True)
+            return {"file": str(f), **build_state(save)}
 
         if path == "/api/problem":
             slug = (query.get("slug") or [""])[0]
@@ -351,8 +491,18 @@ class Handler(BaseHTTPRequestHandler):
             data = data.replace(b"__GAME_TOKEN__", TOKEN.encode())
         self._send(200, data, MIME.get(f.suffix, "application/octet-stream"))
 
+    def _asset(self, kind):
+        files = list(ASSET_DIR.glob(f"{kind}.*")) if kind in ("avatar", "bg") else []
+        if not files:
+            return self._send(404, {"error": "找不到"})
+        f = files[0]
+        mime = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+        self._send(200, f.read_bytes(), mime.get(f.suffix.lstrip("."), "application/octet-stream"))
+
     def _handle(self, method):
         u = urlparse(self.path)
+        if u.path.startswith("/user-asset/"):
+            return self._asset(u.path.rsplit("/", 1)[-1])
         if not u.path.startswith("/api/"):
             return self._static("index.html" if u.path in ("/", "") else u.path.lstrip("/"))
         if self.headers.get("X-Game-Token") != TOKEN:
@@ -386,6 +536,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port=8765, open_browser=True):
+    lc.ensure_home()
     if not lc.PROBLEMS_PATH.exists():
         print("📥 第一次啟動，先抓題目清單…")
         lc.cmd_fetch(type("A", (), {"all": False})())
@@ -402,6 +553,7 @@ def serve(port=8765, open_browser=True):
     url = f"http://localhost:{port}/"
     print("🎮 開心每日刷題 · 遊戲模式啟動！")
     print(f"   網址：{url}")
+    print(f"   工作區：{lc.ROOT}")
     print("   在 VS Code 裡：Ctrl+Shift+P → 輸入 Simple Browser: Show → 貼上網址，就能邊寫邊玩")
     print("   關閉：在這個終端機按 Ctrl+C")
     if open_browser:

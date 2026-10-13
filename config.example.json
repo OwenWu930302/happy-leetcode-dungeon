@@ -1,6 +1,5 @@
 {
   "csrftoken": "在這裡貼上你的 csrftoken",
   "session": "在這裡貼上你的 LEETCODE_SESSION",
-  "lang": "python3",
-  "github_repo": "（選填）你的 GitHub 倉庫網址，例如 https://github.com/你的帳號/leetcode-practice.git"
+  "lang": "python3"
 }

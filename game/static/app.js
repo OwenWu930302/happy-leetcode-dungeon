@@ -47,25 +47,72 @@ async function act(path, body, busyText) {
   }
 }
 
-/* ================= 看板娘 ================= */
-const MASCOT = `<svg viewBox="0 0 100 100" role="img" aria-label="看板娘 露緹">
-<defs><linearGradient id="mH" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5d63a3"/><stop offset="1" stop-color="#2c2f58"/></linearGradient>
-<linearGradient id="mB" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7a80c4"/><stop offset="1" stop-color="#454a86"/></linearGradient>
-<radialGradient id="mI" cx=".5" cy=".35" r=".7"><stop offset="0" stop-color="#ffe2a0"/><stop offset=".55" stop-color="#e9ab47"/><stop offset="1" stop-color="#8a4f12"/></radialGradient></defs>
-<circle cx="50" cy="50" r="48" fill="#141826" stroke="#2b3245"/>
-<path d="M19 58 C14 26 34 11 50 11 C66 11 86 26 81 58 L83 92 L67 81 L50 88 L33 81 L17 92 Z" fill="url(#mH)"/>
-<path d="M36 76 L64 76 L70 100 L30 100 Z" fill="#232a40"/><path d="M44 76 L50 86 L56 76 Z" fill="#e9ab47"/>
+/* ================= 看板娘／頭像 ================= */
+// 每一款都是用同一套參數化畫法生成的原創角色：髮色、瞳色、配件不同
+const AVATARS = [
+  { id: "p0", name: "露緹", hair: ["#5d63a3", "#2c2f58"], bang: ["#7a80c4", "#454a86"], eye: ["#ffe2a0", "#e9ab47", "#8a4f12"], acc: "star", tie: "#e9ab47" },
+  { id: "p1", name: "米菈", hair: ["#f29cbc", "#b4507a"], bang: ["#ffc2d8", "#d8739c"], eye: ["#d4f1ff", "#5fb7e8", "#1d5a8a"], acc: "ribbon", tie: "#ff7fae" },
+  { id: "p2", name: "夏音", hair: ["#f0a04b", "#a9541b"], bang: ["#ffc177", "#d27a2c"], eye: ["#d9ffd9", "#5cc77c", "#1d6b3a"], acc: "phones", tie: "#5cc77c" },
+  { id: "p3", name: "雪奈", hair: ["#e8eef7", "#a8b4c8"], bang: ["#ffffff", "#c6d0e0"], eye: ["#ffd0d0", "#e05a5a", "#7a1a1a"], acc: "cat", tie: "#e05a5a" },
+  { id: "p4", name: "琥珀", hair: ["#8a5a3a", "#4a2a18"], bang: ["#a8744d", "#6a3f22"], eye: ["#fff0b0", "#e0a030", "#7a4a0a"], acc: "glasses", tie: "#c98626" },
+  { id: "p5", name: "夜櫻", hair: ["#2a2438", "#0e0b16"], bang: ["#3e3654", "#1a1528"], eye: ["#ffd6ec", "#f06aa8", "#7a1f4e"], acc: "flower", tie: "#f06aa8" },
+  { id: "p6", name: "珂可", hair: ["#3fb3a8", "#1a5f5a"], bang: ["#6fd6cb", "#2a8a80"], eye: ["#fff3c4", "#ffd27a", "#9a6a10"], acc: "horns", tie: "#ffd27a" },
+  { id: "p7", name: "星璃", hair: ["#f5d97a", "#c49a2a"], bang: ["#fff0a8", "#e0bb4a"], eye: ["#efe0ff", "#a98be0", "#4a2a8a"], acc: "halo", tie: "#a98be0" },
+];
+const ACC = {
+  star: (a) => `<path d="M71 26 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2 z" fill="#ffd27a"/>`,
+  ribbon: (a) => `<path d="M62 22 l12 -8 -2 12 z M62 22 l14 4 -10 6 z" fill="${a.tie}"/><circle cx="63" cy="23" r="3" fill="#fff4"/>`,
+  phones: (a) => `<path d="M24 50 C22 24 78 24 76 50" fill="none" stroke="#2a2f40" stroke-width="5"/><rect x="18" y="46" width="10" height="16" rx="4" fill="${a.tie}"/><rect x="72" y="46" width="10" height="16" rx="4" fill="${a.tie}"/>`,
+  cat: (a) => `<path d="M26 30 L22 8 L42 22 Z M74 30 L78 8 L58 22 Z" fill="${a.hair[0]}"/><path d="M28 26 L26 14 L37 22 Z M72 26 L74 14 L63 22 Z" fill="#f4b6c2"/>`,
+  glasses: () => `<g fill="none" stroke="#3a2a1a" stroke-width="1.6"><circle cx="41" cy="58" r="7"/><circle cx="59" cy="58" r="7"/><path d="M48 58 h4"/></g>`,
+  flower: (a) => `<g transform="translate(68 28)">${[0, 72, 144, 216, 288].map((r) => `<ellipse rx="3.2" ry="5.5" cy="-5" fill="#ffc6de" transform="rotate(${r})"/>`).join("")}<circle r="2.6" fill="#ffd27a"/></g>`,
+  horns: () => `<path d="M32 26 C26 16 28 8 34 4 C32 12 36 18 38 22 Z M68 26 C74 16 72 8 66 4 C68 12 64 18 62 22 Z" fill="#e8d9b0" stroke="#8a7a50" stroke-width=".8"/>`,
+  halo: () => `<ellipse cx="50" cy="12" rx="17" ry="4.5" fill="none" stroke="#ffe7ad" stroke-width="2.5"/>`,
+};
+let uidN = 0;
+function avatarSVG(id) {
+  const a = AVATARS.find((x) => x.id === id) || AVATARS[0];
+  const u = "a" + (++uidN);
+  const eyes = [41, 59].map((x, i) => `<ellipse cx="${x}" cy="57" rx="5" ry="6.2" fill="#fff"/><ellipse cx="${x}" cy="58" rx="3.8" ry="5.2" fill="url(#${u}I)"/><ellipse cx="${x}" cy="59" rx="1.6" ry="2.4" fill="${a.eye[2]}"/><circle cx="${x - 1.4}" cy="55.6" r="1.4" fill="#fff"/>
+    <path d="${i ? "M53.5 52.2 Q59 49.5 64.5 52.5" : "M35.5 52.5 Q41 49.5 46.5 52.2"}" stroke="${a.hair[1]}" stroke-width="1.8" fill="none" stroke-linecap="round"/>`).join("");
+  const behind = a.acc === "halo" || a.acc === "phones" ? "" : "";
+  return `<svg viewBox="0 0 100 100" role="img" aria-label="${esc(a.name)}">
+<defs><linearGradient id="${u}H" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${a.hair[0]}"/><stop offset="1" stop-color="${a.hair[1]}"/></linearGradient>
+<linearGradient id="${u}B" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${a.bang[0]}"/><stop offset="1" stop-color="${a.bang[1]}"/></linearGradient>
+<radialGradient id="${u}I" cx=".5" cy=".35" r=".7"><stop offset="0" stop-color="${a.eye[0]}"/><stop offset=".55" stop-color="${a.eye[1]}"/><stop offset="1" stop-color="${a.eye[2]}"/></radialGradient></defs>
+<circle cx="50" cy="50" r="48" fill="#141826" stroke="#2b3245"/>${behind}
+${a.acc === "cat" ? ACC.cat(a) : ""}${a.acc === "horns" ? ACC.horns(a) : ""}
+<path d="M19 58 C14 26 34 11 50 11 C66 11 86 26 81 58 L83 92 L67 81 L50 88 L33 81 L17 92 Z" fill="url(#${u}H)"/>
+<path d="M36 76 L64 76 L70 100 L30 100 Z" fill="#232a40"/><path d="M44 76 L50 86 L56 76 Z" fill="${a.tie}"/>
 <ellipse cx="50" cy="53" rx="22" ry="24" fill="#f4dfcc"/>
 <ellipse cx="37" cy="64" rx="4.5" ry="2.4" fill="#f19a9a" opacity=".45"/><ellipse cx="63" cy="64" rx="4.5" ry="2.4" fill="#f19a9a" opacity=".45"/>
-<ellipse cx="41" cy="57" rx="5" ry="6.2" fill="#fff"/><ellipse cx="41" cy="58" rx="3.8" ry="5.2" fill="url(#mI)"/><ellipse cx="41" cy="59" rx="1.6" ry="2.4" fill="#3a1f05"/><circle cx="39.6" cy="55.6" r="1.4" fill="#fff"/>
-<path d="M35.5 52.5 Q41 49.5 46.5 52.2" stroke="#2c2f58" stroke-width="1.8" fill="none" stroke-linecap="round"/>
-<ellipse cx="59" cy="57" rx="5" ry="6.2" fill="#fff"/><ellipse cx="59" cy="58" rx="3.8" ry="5.2" fill="url(#mI)"/><ellipse cx="59" cy="59" rx="1.6" ry="2.4" fill="#3a1f05"/><circle cx="57.6" cy="55.6" r="1.4" fill="#fff"/>
-<path d="M53.5 52.2 Q59 49.5 64.5 52.5" stroke="#2c2f58" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+${eyes}
 <path d="M47 67.5 Q50 70 53 67.5" stroke="#b5605a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
-<path d="M27 52 C26 31 38 22 50 22 C62 22 74 31 73 52 C69 42 63 37 59 35 C58 41 55 45 51 47 C50 41 47 37 43 36 C39 41 33 46 27 52 Z" fill="url(#mB)"/>
-<path d="M50 23 C51 15 57 12 61 10 C57 15 55 18 53 24 Z" fill="#5d63a3"/>
-<path d="M71 26 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2 z" fill="#ffd27a"/></svg>`;
-$("#mascotBox").innerHTML = MASCOT;
+<path d="M27 52 C26 31 38 22 50 22 C62 22 74 31 73 52 C69 42 63 37 59 35 C58 41 55 45 51 47 C50 41 47 37 43 36 C39 41 33 46 27 52 Z" fill="url(#${u}B)"/>
+<path d="M50 23 C51 15 57 12 61 10 C57 15 55 18 53 24 Z" fill="${a.hair[0]}"/>
+${a.acc !== "cat" && a.acc !== "horns" ? ACC[a.acc](a) : ""}</svg>`;
+}
+const profile = () => (S && S.profile) || { avatar: "p0", companion: "露緹", name: "", bg: "dungeon", dim: 0.55, uploads: {} };
+function avatarHTML(p = profile()) {
+  if (p.avatar === "upload" && p.uploads && p.uploads.avatar) return `<img src="/user-asset/avatar?v=${esc(p.uploads.avatar.split("v=")[1] || "1")}" alt="頭像">`;
+  return avatarSVG(p.avatar);
+}
+let avatarKey = "";
+function applyLook() {
+  const p = profile();
+  const key = [p.avatar, p.uploads?.avatar, p.bg, p.dim, p.uploads?.bg].join("|");
+  if (key === avatarKey) return;
+  avatarKey = key;
+  $("#mascotBox").innerHTML = avatarHTML(p);
+  document.body.dataset.bg = p.bg === "upload" && !p.uploads?.bg ? "dungeon" : p.bg;
+  if (p.bg === "upload" && p.uploads?.bg) {
+    const d = Number(p.dim ?? 0.55);
+    document.body.style.backgroundImage = `linear-gradient(rgba(10,12,18,${d}),rgba(10,12,18,${d})),url("/user-asset/bg?v=${encodeURIComponent(p.uploads.bg.split("v=")[1] || "1")}")`;
+  } else document.body.style.backgroundImage = "";
+}
+document.body.dataset.bg = "dungeon";
+$("#mascotBox").innerHTML = avatarSVG("p0");
+$("#mascotBox").addEventListener("click", () => setTab("settings"));
 
 function say(html, bounce = true) {
   $("#say").innerHTML = html;
@@ -181,6 +228,10 @@ function handleEvents(evts) {
       confetti();
       toast("win", `賞金達成：${e.title}`, `額外經驗 +${e.xp}　結晶 +${e.shards}`);
       say("賞金到手！廣告推薦的題目果然沒騙你吧。");
+    } else if (e.kind === "login") {
+      confetti(60);
+      toast("win", `登入成功：${e.user}`, "現在可以試招、出招、同步官網進度了");
+      say(`歡迎，<em>${esc(e.user)}</em>！要不要先同步一下官網進度？`);
     } else if (e.kind === "bountyAccepted") {
       toast("info", "賞金任務已接下", "解題檔已在 VS Code 開啟，解完就能領雙倍經驗");
     }
@@ -201,6 +252,7 @@ function render() {
   if (tab === "tree") renderTree();
   if (tab === "power") renderPower();
   if (tab === "problem") renderProblem();
+  if (tab === "settings") renderSettings();
   renderDock();
   renderModal();
   for (const [cls, top, left] of keep) {
@@ -211,6 +263,9 @@ function render() {
 
 function renderHud() {
   const p = S.player;
+  applyLook();
+  $("#sayWho").textContent = profile().companion || "露緹";
+  $("#hName").textContent = profile().name || "";
   $("#hLv").textContent = p.level;
   $("#hTitle").textContent = p.title;
   $("#hPow").textContent = p.rating;
@@ -251,10 +306,10 @@ function renderHome() {
   const bounties = Object.entries(S.meta.bounties);
   const run = S.run;
   el.innerHTML = `
-    ${S.login ? "" : `<div class="notice">還沒設定登入資訊，<b>試招／出招／同步</b>會失敗。照 README 第二節，把 <code>config.example.json</code> 複製成 <code>config.json</code> 並貼上兩個 cookie 就好（不用密碼）。</div>`}
+    ${S.login ? "" : `<div class="notice">還沒登入 LeetCode，<b>試招／出招／同步</b>需要登入。到 <button class="btn ghost" data-go="settings" style="padding:2px 10px">設定 → 帳號</button> 貼上兩個 cookie 就好，不用密碼。</div>`}
     <div class="panel">
       <div class="eyebrow">今日委託 · Daily Quests</div>
-      <h2>露緹替你挑的三題</h2>
+      <h2>${esc(profile().companion || "露緹")}替你挑的三題</h2>
       <p class="muted" style="margin:0 0 12px">依你的戰力 ${S.player.rating} 和技能樹的弱點挑的，難度剛好在你「努力一下打得贏」的範圍。</p>
       <div class="quests">${S.picks.map((q) => questCard(q)).join("") || `<div class="empty">題庫裡的題目都被你解完了！試試「擴充題庫」。</div>`}</div>
     </div>
@@ -567,7 +622,7 @@ function renderPower() {
     <div class="grid2">
       <div class="panel"><div class="eyebrow">Radar</div><h2>技能雷達</h2>
         <div class="radar-wrap">${radarSVG(axes, tagMap, p.rating)}</div>
-        <p class="muted" style="font-size:12.5px;margin:6px 0 0">外圈 1800、內圈 800。虛線是你的總戰力；還沒打過的技能先用總戰力代替（淡色）。</p></div>
+        <p class="muted" style="font-size:12.5px;margin:6px 0 0">外圈 ${radarRange[1]}、中心 ${radarRange[0]}。虛線是你的總戰力；還沒打過的技能先用總戰力代替（淡色）。</p></div>
       <div class="panel"><div class="eyebrow">Breakdown</div><h2>各技能戰力</h2>
         ${rows.length ? `<div class="tblwrap"><table class="tags"><thead><tr><th>技能</th><th>戰力</th><th></th><th>對戰</th></tr></thead><tbody>
         ${rows.map((t) => `<tr><td><button class="chip" data-node-go="${esc(t.id)}">${esc(t.name)}</button></td><td class="n">${t.rating}</td>
@@ -577,11 +632,15 @@ function renderPower() {
     </div>`;
 }
 
+let radarRange = [800, 1800];
 function radarSVG(axes, tagMap, base) {
   const W = 320, C = W / 2, R = 118, n = axes.length;
   if (n < 3) return `<div class="empty">多解幾題不同類型的題目，雷達圖就會長出來。</div>`;
+  const all = axes.map((a) => tagMap[a]?.rating ?? base).concat(base);
+  const lo = Math.floor((Math.min(...all) - 120) / 100) * 100, hi = Math.ceil((Math.max(...all) + 120) / 100) * 100;
+  radarRange = [lo, hi];
   const ang = (i) => -Math.PI / 2 + (i * 2 * Math.PI) / n;
-  const rad = (v) => Math.max(0, Math.min(1, (v - 800) / 1000)) * R;
+  const rad = (v) => Math.max(0, Math.min(1, (v - lo) / (hi - lo))) * R;
   let s = `<svg class="radar" viewBox="0 0 ${W} ${W}" width="${W}" height="${W}" style="max-width:100%">`;
   for (const lv of [0.25, 0.5, 0.75, 1]) {
     s += `<polygon points="${axes.map((_, i) => `${C + Math.cos(ang(i)) * R * lv},${C + Math.sin(ang(i)) * R * lv}`).join(" ")}" fill="none" stroke="#2b3245"/>`;
@@ -707,7 +766,10 @@ function renderModal() {
   const run = S.run;
   const box = $("#modal"), card = $("#modalCard");
   let html = "", key = "";
-  if (run && run.status !== "active") {
+  if (!profile().onboarded) {
+    key = "ob" + obStep;
+    html = onboardingHTML();
+  } else if (run && run.status !== "active") {
     const r = run.result || {};
     key = "result" + run.seed;
     html = `<div class="eyebrow">${r.won ? "Victory" : "Defeat"}</div>
@@ -717,7 +779,7 @@ function renderModal() {
       <button class="btn primary" data-run="clear">回到營地</button>`;
   } else if (run && run.pending && tab === "run") {
     const pd = run.pending;
-    key = "pend" + run.pos + pd.kind;
+    key = "pend" + run.pos + pd.kind + run.gold + (pd.items || []).filter((i) => i.sold).length;
     if (pd.kind === "relic") {
       html = `<div class="eyebrow">${esc(pd.title)}</div><h2>選一件遺物帶走</h2>${pd.gold ? `<p class="muted" style="margin:0">寶箱裡還有 ${pd.gold} 枚金幣。</p>` : ""}
         <div class="choices">${pd.options.map((id) => relicCard(id, `data-act="pick" data-arg="${id}"`)).join("") || `<div class="empty">遺物都被你拿光了！</div>`}</div>
@@ -740,13 +802,130 @@ function renderModal() {
   }
   if (!html) { box.hidden = true; modalKey = ""; return; }
   if (key !== modalKey || box.hidden) { card.innerHTML = html; modalKey = key; }
-  else card.innerHTML = html;
   box.hidden = false;
 }
 
 function relicCard(id, attrs, price) {
   const r = S.relics[id];
   return `<button class="relic-card" ${attrs}><span class="relic">${esc(r.glyph)}</span><span><b>${esc(r.name)}</b>${price ? `　<span class="gold">${esc(price)}</span>` : ""}<p>${esc(r.desc)}</p></span></button>`;
+}
+
+/* ---------- 設定 ---------- */
+const BG_NAMES = { dungeon: "地城夜幕", starry: "星空", sakura: "夜櫻", abyss: "深海", ember: "熔岩", forest: "森林", plain: "純黑" };
+let settingsSig = "";
+let obStep = 1;
+
+function avatarPicker(p) {
+  const up = p.uploads && p.uploads.avatar;
+  return `<div class="avatars">
+    ${AVATARS.map((a) => `<button class="av" data-avatar="${a.id}" aria-pressed="${p.avatar === a.id}">${avatarSVG(a.id)}<span>${esc(a.name)}</span></button>`).join("")}
+    ${up ? `<button class="av" data-avatar="upload" aria-pressed="${p.avatar === "upload"}"><img src="/user-asset/avatar?v=${esc(up.split("v=")[1] || "1")}" alt=""><span>我的圖片</span></button>` : ""}
+    <label class="av up" role="button" tabindex="0"><span>＋</span><span>上傳圖片</span><input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-upload="avatar" hidden></label>
+  </div>`;
+}
+
+function loginForm() {
+  return `<ol class="steps">
+      <li>用瀏覽器登入 <a href="https://leetcode.com" target="_blank" rel="noopener">leetcode.com</a></li>
+      <li>按 <code>F12</code> → <b>Application（應用程式）</b> → 左邊 <b>Cookies</b> → <code>https://leetcode.com</code></li>
+      <li>複製 <code>LEETCODE_SESSION</code> 和 <code>csrftoken</code> 的 Value，貼到下面</li>
+    </ol>
+    <div class="fields" style="margin-top:10px">
+      <label class="field">LEETCODE_SESSION<input id="lcSession" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ0eXAiOiJKV1Qi…"></label>
+      <label class="field">csrftoken<input id="lcCsrf" type="password" autocomplete="off" spellcheck="false" placeholder="一長串英數字"></label>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:6px 0 10px">cookie 只會存在你電腦上的 <span class="mono">config.json</span>，不會上傳到任何地方。大約兩週會過期，到時候回來重貼一次。</p>
+    <button class="btn primary" data-login>驗證並登入</button>`;
+}
+
+function renderSettings() {
+  const el = $("#tab-settings");
+  const p = profile();
+  const sig = JSON.stringify([p, S.login, S.lang, S.vscodeInstalled, S.library.total]);
+  if (sig === settingsSig && el.childElementCount) return;
+  settingsSig = sig;
+  el.innerHTML = `
+    <div class="panel">
+      <div class="eyebrow">Account · LeetCode</div>
+      <h2>帳號</h2>
+      ${S.login ? `<div class="lc-user" style="margin:8px 0 12px">${p.lcAvatar ? `<img src="${esc(p.lcAvatar)}" alt="" referrerpolicy="no-referrer">` : ""}
+          <div><b style="font-size:16px">${esc(p.lcUser || "已登入")}</b><div class="muted" style="font-size:12.5px">試招、出招、同步官網進度都會用這個帳號</div></div></div>
+        <div class="row"><button class="btn" data-do="sync">同步官網進度</button><button class="btn ghost" data-relogin>換帳號</button><button class="btn danger" data-logout>登出</button></div>
+        <div id="reloginBox" hidden style="margin-top:12px">${loginForm()}</div>`
+      : `<p class="muted" style="margin:4px 0 10px">登入後才能試招、出招、同步你在官網的進度。不需要密碼，只要兩個 cookie。</p>${loginForm()}`}
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Companion</div>
+      <h2>頭像與看板娘</h2>
+      <p class="muted" style="margin:4px 0 12px">選一位陪你刷題的看板娘，或上傳自己的圖片（PNG、JPG、GIF、WebP，6 MB 以內）。</p>
+      ${avatarPicker(p)}
+      <div class="fields" style="margin-top:14px">
+        <label class="field">你的暱稱<input id="pfName" maxlength="24" value="${esc(p.name)}" placeholder="獵題人"></label>
+        <label class="field">看板娘的名字<input id="pfComp" maxlength="24" value="${esc(p.companion)}" placeholder="露緹"></label>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" data-savename>儲存名字</button></div>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Backdrop</div>
+      <h2>背景</h2>
+      <div class="bgs" style="margin-top:10px">
+        ${S.backgrounds.map((b) => `<button class="bgsw" data-bg="${b}" data-bgpick="${b}" aria-pressed="${p.bg === b}">${BG_NAMES[b] || b}</button>`).join("")}
+        ${p.uploads && p.uploads.bg ? `<button class="bgsw" data-bgpick="upload" aria-pressed="${p.bg === "upload"}" style="background-image:url('/user-asset/bg?v=${esc(p.uploads.bg.split("v=")[1] || "1")}')">我的圖片</button>` : ""}
+        <label class="bgsw" style="border-style:dashed;cursor:pointer;justify-content:center;align-items:center;color:var(--ash);text-shadow:none" role="button" tabindex="0">＋ 上傳背景<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-upload="bg" hidden></label>
+      </div>
+      ${p.bg === "upload" ? `<label class="field" style="margin-top:12px;max-width:320px">背景暗化（讓文字更清楚）<input id="pfDim" type="range" min="0" max="0.9" step="0.05" value="${p.dim}"></label>` : ""}
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Language</div>
+      <h2>解題語言</h2>
+      <p class="muted" style="margin:4px 0 10px">新建立的解題檔會用這個語言的官方範本。已經建好的檔案不會被改動。</p>
+      <label class="field" style="max-width:280px">語言<select id="pfLang">${S.langs.map((l) => `<option value="${l.id}" ${l.id === S.lang ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></label>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Workspace</div>
+      <h2>工作區</h2>
+      <p class="muted" style="margin:4px 0 8px">你的解題檔、紀錄、遊戲存檔和登入資訊都在這個資料夾，每個玩家各自一份。</p>
+      <div class="path">${esc(S.workspace)}</div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" data-ws>在 VS Code 開啟工作區</button>
+        <button class="btn ${S.vscodeInstalled ? "ghost" : "rune"}" data-vscode>${S.vscodeInstalled ? "重新安裝 VS Code 任務" : "安裝 VS Code 任務（Ctrl+Shift+B 提交）"}</button>
+        ${S.library.allDifficulties ? "" : `<button class="btn ghost" data-do="fetchAll">擴充題庫（全部難度）</button>`}
+      </div>
+    </div>`;
+}
+
+function onboardingHTML() {
+  const p = profile();
+  if (obStep === 1) {
+    return `<div class="eyebrow">Welcome · 1 / 2</div>
+      <h2>歡迎來到 LeetCode 演算法地城</h2>
+      <p class="muted" style="margin:0">在這裡刷題會長出技能樹、累積戰力、打怪遠征。先選一位陪你冒險的看板娘吧。</p>
+      ${avatarPicker(p)}
+      <div class="fields">
+        <label class="field">你的暱稱<input id="obName" maxlength="24" value="${esc(p.name)}" placeholder="獵題人"></label>
+        <label class="field">解題語言<select id="obLang">${S.langs.map((l) => `<option value="${l.id}" ${l.id === S.lang ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></label>
+      </div>
+      <button class="btn primary" data-ob="next">下一步</button>`;
+  }
+  return `<div class="eyebrow">Welcome · 2 / 2</div>
+    <h2>登入你的 LeetCode 帳號</h2>
+    ${S.login ? `<p>已登入：<b>${esc(p.lcUser || "")}</b></p>` : loginForm()}
+    <div class="row"><button class="btn ${S.login ? "primary" : "ghost"}" data-ob="done">${S.login ? "開始冒險" : "先跳過，之後在設定登入"}</button></div>`;
+}
+
+async function uploadFile(input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  if (f.size > 6 * 1024 * 1024) return toast("info", "圖片太大了", "請小於 6 MB");
+  const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+  const st = await act("/api/upload", { kind: input.dataset.upload, data }, "上傳中…");
+  if (st) { settingsSig = ""; modalKey = ""; render(); toast("win", input.dataset.upload === "avatar" ? "頭像換好了" : "背景換好了"); }
+}
+
+async function doLogin() {
+  const session = ($("#lcSession") || {}).value || "", csrftoken = ($("#lcCsrf") || {}).value || "";
+  const st = await act("/api/login", { session, csrftoken }, "向 LeetCode 確認身分中…");
+  if (st) { settingsSig = ""; modalKey = ""; render(); }
 }
 
 /* ================= 動作 ================= */
@@ -835,8 +1014,41 @@ document.addEventListener("click", async (ev) => {
     return;
   }
   if (d.adx !== undefined) return closeAd();
+  if (d.avatar) {
+    const body = { avatar: d.avatar };
+    const preset = AVATARS.find((a) => a.id === d.avatar);
+    // 看板娘名字還是預設角色名時，跟著換成新角色的名字
+    if (preset && (!profile().companion || AVATARS.some((a) => a.name === profile().companion))) body.companion = preset.name;
+    const st = await act("/api/profile", body); if (st) { settingsSig = ""; modalKey = ""; render(); say(d.avatar === "upload" ? "新頭像很好看！" : `你好，我是<em>${esc((AVATARS.find((a) => a.id === d.avatar) || {}).name || "")}</em>，請多指教！`); } return; }
+  if (d.bgpick) { const st = await act("/api/profile", { bg: d.bgpick }); if (st) { settingsSig = ""; render(); } return; }
+  if (d.savename !== undefined) {
+    const st = await act("/api/profile", { name: $("#pfName").value, companion: $("#pfComp").value });
+    if (st) { settingsSig = ""; render(); toast("win", "名字已儲存"); say(`<em>${esc(profile().name || "獵題人")}</em>，我記住了！`); }
+    return;
+  }
+  if (d.login !== undefined) return doLogin();
+  if (d.relogin !== undefined) { $("#reloginBox").hidden = false; return; }
+  if (d.logout !== undefined) { const st = await act("/api/logout", {}); if (st) { settingsSig = ""; render(); toast("info", "已登出"); } return; }
+  if (d.ws !== undefined) { const r = await act("/api/workspace/open", {}); if (r) toast("info", "開啟工作區", r.path); return; }
+  if (d.vscode !== undefined) { const st = await act("/api/vscode/install", {}); if (st) { settingsSig = ""; render(); toast("win", "VS Code 任務已安裝", "用 VS Code 打開工作區，按 Ctrl+Shift+B 就能提交"); } return; }
+  if (d.ob === "next") {
+    const st = await act("/api/profile", { name: $("#obName").value, lang: $("#obLang").value });
+    if (st) { obStep = 2; modalKey = ""; render(); }
+    return;
+  }
+  if (d.ob === "done") { obStep = 1; await act("/api/profile", { onboarded: true }); say(`歡迎，<em>${esc(profile().name || "獵題人")}</em>！先去酒館看看今天的委託吧。`); setTab("home"); return; }
+});
+document.addEventListener("change", async (ev) => {
+  const t = ev.target;
+  if (t.matches("input[data-upload]")) return uploadFile(t);
+  if (t.id === "pfLang") { const st = await act("/api/profile", { lang: t.value }); if (st) toast("info", "解題語言已更新", t.selectedOptions[0].textContent); return; }
+  if (t.id === "pfDim") { await act("/api/profile", { dim: Number(t.value) }); return; }
+});
+document.addEventListener("input", (ev) => {
+  if (ev.target.id === "pfDim") { avatarKey = ""; const d = ev.target.value; const p = profile(); if (p.uploads?.bg) document.body.style.backgroundImage = `linear-gradient(rgba(10,12,18,${d}),rgba(10,12,18,${d})),url("/user-asset/bg?v=${encodeURIComponent(p.uploads.bg.split("v=")[1] || "1")}")`; }
 });
 document.addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches("label[role=button]")) { e.preventDefault(); e.target.querySelector("input")?.click(); return; }
   if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-enter],[data-node]")) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
 });
 
@@ -851,7 +1063,7 @@ async function maybeAd(force = false) {
   if (!r.ad) return;
   lastAd = Date.now();
   const a = r.ad;
-  const kick = ["限時賞金！", "露緹強力推薦", "你的下一個對手", "今日特價：經驗 ×2", "剛好打得贏！"][Math.floor(Math.random() * 5)];
+  const kick = ["限時賞金！", `${profile().companion || "露緹"}強力推薦`, "你的下一個對手", "今日特價：經驗 ×2", "剛好打得贏！"][Math.floor(Math.random() * 5)];
   const ad = $("#ad");
   ad.innerHTML = `<div class="ad-in">
     <span class="ad-tag">AD</span><button class="ad-x" data-adx disabled aria-label="關閉廣告">3</button>

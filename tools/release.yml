@@ -1,0 +1,54 @@
+# 啟用方式：把這個檔案複製到 .github/workflows/release.yml 再 commit（Windows：見 README「打包 EXE」）
+# 推一個版本標籤（例如 v1.0.0）就會自動在 Windows 上打包 EXE，並發佈到 GitHub Releases。
+#   git tag v1.0.0
+#   git push origin v1.0.0
+# 也可以在 GitHub 的 Actions 頁面手動執行（Run workflow），只會產生可下載的 Artifact。
+name: Build EXE
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install requests pyinstaller
+
+      - name: Build EXE
+        shell: cmd
+        run: >
+          python -m PyInstaller --noconfirm --onefile --name LeetCodeDungeon
+          --icon assets\icon.ico
+          --add-data "game\static;game\static"
+          --add-data "data\problems.json;data"
+          --collect-submodules game
+          --exclude-module xhtml2pdf --exclude-module reportlab
+          launcher.py
+
+      - name: Smoke test
+        shell: cmd
+        run: dist\LeetCodeDungeon.exe --help
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LeetCodeDungeon-windows
+          path: dist/LeetCodeDungeon.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LeetCodeDungeon.exe
+          generate_release_notes: true

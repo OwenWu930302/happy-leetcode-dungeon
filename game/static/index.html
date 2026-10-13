@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="game-token" content="__GAME_TOKEN__">
-<title>開心每日刷題 · 演算法地城</title>
+<title>LeetCode 演算法地城</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;900&display=swap">
@@ -16,16 +16,16 @@
 <canvas id="fx" aria-hidden="true"></canvas>
 
 <header class="hud">
-  <div class="hud-mascot" id="mascotBox"></div>
+  <button class="hud-mascot" id="mascotBox" title="換頭像、背景、帳號" aria-label="設定"></button>
   <div class="hud-main">
     <div class="hud-top">
       <span class="lvl">LV <b id="hLv">1</b></span>
-      <span class="title" id="hTitle">見習獵題人</span>
+      <span class="title"><span id="hName"></span><span id="hTitle">見習獵題人</span></span>
       <span class="power" title="戰力（類 Elo）">戰力 <b id="hPow">1000</b><i id="hRank">青銅</i></span>
       <span class="shards" title="靈魂結晶：遠征結束後留下，用來買永久強化"><span class="gem"></span><b id="hShards">0</b></span>
     </div>
     <div class="xpbar"><i id="hXp"></i><span id="hXpTxt">0 / 50</span></div>
-    <div class="bubble" id="bubble" aria-live="polite"><b>露緹</b><span id="say">歡迎回來，獵題人。</span></div>
+    <div class="bubble" id="bubble" aria-live="polite"><b id="sayWho">露緹</b><span id="say">歡迎回來，獵題人。</span></div>
   </div>
 </header>
 
@@ -35,6 +35,7 @@
   <button role="tab" data-tab="tree"><span>技能樹</span></button>
   <button role="tab" data-tab="power"><span>戰力</span></button>
   <button role="tab" data-tab="problem"><span>題目</span></button>
+  <button role="tab" data-tab="settings"><span>設定</span></button>
 </nav>
 
 <main>
@@ -43,6 +44,7 @@
   <section id="tab-tree" class="tab" hidden></section>
   <section id="tab-power" class="tab" hidden></section>
   <section id="tab-problem" class="tab" hidden></section>
+  <section id="tab-settings" class="tab" hidden></section>
 </main>
 
 <div id="dock" hidden></div>

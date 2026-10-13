@@ -1,14 +1,26 @@
-# 絕對不要上傳：你的 LeetCode 登入 cookie
+# ── 每位玩家的個人工作區：登入 cookie、紀錄、解題檔、遊戲存檔 ──
+workspace/
 config.json
 
-# 快取與雜物
-data/_imgcache/
+# 舊版放在專案根目錄的個人資料（新版會自動搬進 workspace/）
+data/records.json
+data/game.json
+data/profile.json
 data/details/
+data/_imgcache/
+solutions/
 pdf/
+SOLVED.md
+
+# ── 打包產物 ──
+build/
+dist/
+*.spec
+
+# ── 雜物 ──
 __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
-
-# Claude Code 本機設定
 .claude/
+.vscode/
