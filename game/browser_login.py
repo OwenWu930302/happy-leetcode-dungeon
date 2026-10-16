@@ -18,6 +18,7 @@ LeetCode 沒有給第三方程式用的官方登入（OAuth），所以我們這
 不需要任何額外套件：WebSocket 用標準函式庫自己實作（只用到最基本的文字訊框）。
 """
 
+import atexit
 import base64
 import json
 import os
@@ -194,8 +195,12 @@ class BrowserWindow:
     def alive(self):
         return self.port() is not None
 
-    def open(self, url, size="900,760"):
-        """確保瀏覽器開著並有一個分頁在 url。回傳 (port, target_id)。"""
+    def open(self, url, size="900,760", hidden=False):
+        """確保瀏覽器開著並有一個分頁在 url。回傳 (port, target_id)。
+
+        hidden=True 時把視窗開在螢幕外面（不是無頭模式，對網站來說就是一般的瀏覽器），
+        需要使用者操作時再用 set_visible() 叫出來。
+        """
         port = self.port()
         if port:
             t = _local_json(port, "/json/new?" + url, method="PUT")
@@ -211,6 +216,8 @@ class BrowserWindow:
         args = [exe, f"--user-data-dir={self.profile_dir}", "--remote-debugging-port=0",
                 "--remote-debugging-address=127.0.0.1", "--no-first-run", "--no-default-browser-check",
                 "--disable-features=Translate", f"--window-size={size}", f"--app={url}"]
+        if hidden:
+            args.insert(-1, "--window-position=-32000,-32000")
         extra = os.environ.get("LCD_BROWSER_ARGS")
         if extra:
             args[1:1] = extra.split()
@@ -228,6 +235,39 @@ class BrowserWindow:
 
     def browser_ws(self, port):
         return MiniWS(_local_json(port, "/json/version")["webSocketDebuggerUrl"])
+
+    def set_visible(self, port, target_id, visible, size=(560, 720)):
+        """把分頁所在的視窗移到螢幕中間（visible）或螢幕外（hidden）。失敗就算了，不影響流程。"""
+        if not target_id:
+            return
+        ws = None
+        try:
+            ws = self.browser_ws(port)
+            wid = ws.call("Browser.getWindowForTarget", {"targetId": target_id})["windowId"]
+            ws.call("Browser.setWindowBounds", {"windowId": wid, "bounds": {"windowState": "normal"}})
+            if visible:
+                bounds = {"left": 160, "top": 90, "width": size[0], "height": size[1]}
+            else:
+                bounds = {"left": -32000, "top": -32000}
+            ws.call("Browser.setWindowBounds", {"windowId": wid, "bounds": bounds})
+            if visible:
+                ws.call("Target.activateTarget", {"targetId": target_id})
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            if ws:
+                ws.close()
+
+    def close_browser(self):
+        port = self.port()
+        if not port:
+            return
+        try:
+            ws = self.browser_ws(port)
+            ws.call("Browser.close")
+            ws.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +311,7 @@ class BrowserLogin:
         ws = None
         try:
             port, target = self.win.open(LOGIN_URL, size="520,760")
+            self.win.set_visible(port, target, True, size=(520, 760))
             ws = self.win.browser_ws(port)
             deadline = time.time() + TIMEOUT
             last_session = None
@@ -335,15 +376,27 @@ FETCH_JS = r"""
 class BrowserRelay:
     """在專用瀏覽器的 leetcode.com 分頁裡執行 fetch。
 
-    請求是由真正的瀏覽器送出（同樣的登入 cookie、同樣的瀏覽器特徵），所以 Cloudflare 會正常放行；
-    如果它真的要求點「我是真人」，視窗是開著的，使用者自己點一下就好。程式不會代替人通過驗證。
+    請求是由真正的瀏覽器送出（同樣的登入 cookie、同樣的瀏覽器特徵），所以 Cloudflare 會正常放行。
+    視窗平常開在螢幕外，玩家只看得到遊戲；Cloudflare 真的要求點「我是真人」時，
+    視窗才會跳到螢幕中間讓玩家自己點，點完再藏回去。程式不會代替人通過驗證。
     """
+
+    CHALLENGE_SHOW_AFTER = 5  # 驗證頁停留超過幾秒就把視窗叫出來
 
     def __init__(self, profile_dir: Path, base="https://leetcode.com"):
         self.win = BrowserWindow(profile_dir)
         self.base = base.rstrip("/")
         self.page = None  # MiniWS 連到 leetcode 分頁
         self.target = None
+        self.port = None
+        self.lock = threading.RLock()
+        self.visible = False
+        self.needs_user = False
+        self.launched = False
+
+    # ---- 狀態（給遊戲畫面顯示「請在視窗裡完成驗證」）----
+    def status(self):
+        return {"needsUser": self.needs_user, "ready": self.page is not None}
 
     def _eval(self, expr, timeout=60):
         self.page.sock.settimeout(timeout)
@@ -351,6 +404,11 @@ class BrowserRelay:
         if res.get("exceptionDetails"):
             raise RuntimeError("瀏覽器裡的請求失敗：" + json.dumps(res["exceptionDetails"].get("exception", {}).get("description", ""))[:200])
         return res.get("result", {}).get("value")
+
+    def _show(self, on):
+        if on != self.visible:
+            self.win.set_visible(self.port, self.target, on)
+            self.visible = on
 
     def _connect(self, url):
         if self.page:
@@ -370,45 +428,73 @@ class BrowserRelay:
         if existing:
             target = existing[0]["id"]
         else:
-            port, target = self.win.open(url)
+            was_running = port is not None
+            port, target = self.win.open(url, hidden=True)
+            if not was_running and not self.launched:
+                self.launched = True
+                atexit.register(self.win.close_browser)  # 遊戲關掉時一起收掉藏起來的瀏覽器
+            self.visible = False
         pages = [t for t in _local_json(port, "/json/list") if t.get("type") == "page"]
         page = next((t for t in pages if t.get("id") == target), None) or next(
             (t for t in pages if t.get("url", "").startswith(self.base)), None) or (pages[0] if pages else None)
         if not page:
             raise RuntimeError("找不到 LeetCode 分頁。")
+        self.port = port
         self.target = page["id"]
         self.page = MiniWS(page["webSocketDebuggerUrl"], timeout=60)
 
     def _wait_ready(self, timeout):
-        """等頁面載完、而且不在 Cloudflare 的驗證頁上。"""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                st = self._eval("[location.origin, document.readyState, document.title].join('|')", timeout=10)
-            except (RuntimeError, ConnectionError, OSError, socket.timeout):
-                st = ""
-            origin, ready, title = (st.split("|", 2) + ["", "", ""])[:3]
-            if origin == self.base and ready == "complete" and "just a moment" not in title.lower():
-                return True
-            time.sleep(1.0)
-        return False
+        """等頁面載完、而且不在 Cloudflare 的驗證頁上。驗證卡太久就把視窗叫出來給玩家點。"""
+        start = time.time()
+        deadline = start + timeout
+        try:
+            while time.time() < deadline:
+                try:
+                    st = self._eval("[location.origin, document.readyState, document.title].join('|')", timeout=10)
+                except (RuntimeError, ConnectionError, OSError, socket.timeout):
+                    st = ""
+                origin, ready, title = (st.split("|", 2) + ["", "", ""])[:3]
+                challenged = "just a moment" in title.lower()
+                if origin == self.base and ready == "complete" and not challenged:
+                    return True
+                if challenged and time.time() - start > self.CHALLENGE_SHOW_AFTER:
+                    self.needs_user = True
+                    self._show(True)
+                time.sleep(1.0)
+            return False
+        finally:
+            if self.needs_user:
+                self.needs_user = False
+                self._show(False)
 
-    def request(self, method, path, payload=None, referer=None, wait=150):
+    def warm(self, path="/problemset/"):
+        """背景先把瀏覽器和 LeetCode 分頁準備好，按出招時就不用等。"""
+        def run():
+            try:
+                with self.lock:
+                    self._connect(self.base + path)
+                    self._wait_ready(40)
+            except Exception:  # noqa: BLE001
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    def request(self, method, path, payload=None, referer=None, wait=180):
         """回傳 (狀態碼, 內容文字, cf-mitigated)。"""
-        url = self.base + (referer or "/problemset/")
-        self._connect(url)
-        if not self._wait_ready(wait):
-            raise SystemExit("❌ LeetCode 要求真人驗證：請在跳出的 LeetCode 視窗裡完成驗證，再按一次出招。")
-        expr = FETCH_JS % {
-            "method": json.dumps(method), "referer": json.dumps(url), "path": json.dumps(path),
-            "body": json.dumps(json.dumps(payload)) if payload is not None else "null",
-        }
-        out = self._eval(expr, timeout=60) or {}
-        if out.get("mitigated") == "challenge":
-            # 瀏覽器也被要求驗證：重新載入頁面讓驗證出現在視窗裡，等使用者完成後再送一次
-            self.page.call("Page.navigate", {"url": url})
-            time.sleep(1.5)
+        with self.lock:
+            url = self.base + (referer or "/problemset/")
+            self._connect(url)
             if not self._wait_ready(wait):
-                raise SystemExit("❌ LeetCode 要求真人驗證：請在跳出的 LeetCode 視窗裡完成驗證，再按一次出招。")
+                raise SystemExit("❌ LeetCode 要求真人驗證，但還沒完成。請在跳出的 LeetCode 視窗裡點一下驗證，再出招一次。")
+            expr = FETCH_JS % {
+                "method": json.dumps(method), "referer": json.dumps(url), "path": json.dumps(path),
+                "body": json.dumps(json.dumps(payload)) if payload is not None else "null",
+            }
             out = self._eval(expr, timeout=60) or {}
-        return out.get("status", 0), out.get("text", ""), out.get("mitigated", "")
+            if out.get("mitigated") == "challenge":
+                # 連瀏覽器也被要求驗證：重新載入頁面讓驗證出現，玩家點完後再送一次
+                self.page.call("Page.navigate", {"url": url})
+                time.sleep(1.5)
+                if not self._wait_ready(wait):
+                    raise SystemExit("❌ LeetCode 要求真人驗證，但還沒完成。請在跳出的 LeetCode 視窗裡點一下驗證，再出招一次。")
+                out = self._eval(expr, timeout=60) or {}
+            return out.get("status", 0), out.get("text", ""), out.get("mitigated", "")

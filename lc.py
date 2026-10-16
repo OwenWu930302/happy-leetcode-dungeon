@@ -252,13 +252,31 @@ def get_relay():
     return _RELAY
 
 
+def transport() -> str:
+    """提交方式：browser＝一律由藏起來的瀏覽器送出（預設，最不容易被擋）；direct＝程式直接送出。"""
+    t = load_config().get("transport", "browser")
+    return t if t in ("browser", "direct") else "browser"
+
+
 def lc_request(session, method, path, payload=None, referer=None, action="請求"):
-    """送 LeetCode 請求；被 Cloudflare 要求真人驗證時，自動改由瀏覽器送出（之後 30 分鐘都走瀏覽器）。"""
+    """送 LeetCode 請求。
+
+    預設由瀏覽器送出；選了「直接送出」時，被 Cloudflare 擋下也會自動改用瀏覽器（之後 30 分鐘都走瀏覽器）。
+    """
     global _RELAY_UNTIL
     url = BASE + path
     relay = None
-    if time.time() < _RELAY_UNTIL:
+    if transport() == "browser" or time.time() < _RELAY_UNTIL:
         relay = get_relay()
+    if relay is not None:
+        try:
+            status, text, mit = relay.request(method, path, payload, referer)
+            resp = RelayResponse(method, url, status, text, mit)
+            check_response(resp, action)
+            return resp.json()
+        except (RuntimeError, OSError, ConnectionError, ValueError) as e:
+            print(f"⚠️  瀏覽器送出失敗（{e}），改由程式直接送出…")
+            relay = None
     if relay is None:
         resp = session.request(method, url, json=payload if method == "POST" else None,
                                headers={"Referer": BASE + (referer or "/")}, timeout=30)
@@ -607,13 +625,14 @@ def read_solution(p: dict):
 
 def poll_check(session: requests.Session, check_id: str, slug: str) -> dict:
     """輪詢判題結果，直到完成。"""
-    for _ in range(60):  # 最多等約 60 秒
+    waits = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0] + [4.0] * 20  # 越等越久，總共約 90 秒、不到 30 次請求
+    for wait in waits:
+        time.sleep(wait)
         result = lc_request(session, "GET", f"/submissions/detail/{check_id}/check/",
                             referer=f"/problems/{slug}/", action="取得判題結果")
         if result.get("state") == "SUCCESS":
             return result
         print("   …判題中", end="\r")
-        time.sleep(1)
     sys.exit("❌ 等太久了，判題逾時。請稍後再試。")
 
 

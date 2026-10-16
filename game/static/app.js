@@ -191,15 +191,22 @@ const IDLE = [
 ];
 
 /* ================= 小工具 ================= */
-let busyHint = null;
+let busyHint = null, relayPoll = null;
 function busy(on, text) {
   $("#busy").hidden = !on;
   if (text) $("#busyTxt").textContent = text;
   clearTimeout(busyHint);
-  // 等比較久時，多半是 LeetCode 要求真人驗證、改用瀏覽器視窗送出
-  if (on && /試招|出招|判題/.test(text || "")) busyHint = setTimeout(() => {
-    $("#busyTxt").textContent = "還在等 LeetCode 回應…如果跳出 LeetCode 視窗要求驗證，請在視窗裡完成";
-  }, 7000);
+  clearInterval(relayPoll);
+  if (!on || !/試招|出招|判題/.test(text || "")) return;
+  const base = text;
+  busyHint = setTimeout(() => { if (!$("#busy").hidden) $("#busyTxt").textContent = base + "（LeetCode 回應比較慢，再等一下）"; }, 8000);
+  // LeetCode 要求點「我是真人」時，藏起來的瀏覽器視窗會跳出來，這裡同步提示玩家
+  relayPoll = setInterval(async () => {
+    try {
+      const r = await fetch("/api/relay/status", { headers: { "X-Game-Token": TOKEN } }).then((x) => x.json());
+      if (r.needsUser) $("#busyTxt").textContent = "LeetCode 需要確認你是真人：請在跳出的視窗點一下驗證，完成後會自動繼續";
+    } catch (e) { /* 忽略 */ }
+  }, 1500);
 }
 
 function toast(kind, title, text = "") {
@@ -974,7 +981,7 @@ async function startBrowserLogin() {
 function renderSettings() {
   const el = $("#tab-settings");
   const p = profile();
-  const sig = JSON.stringify([p, S.persona, S.login, S.lang, S.vscodeInstalled, S.library.total]);
+  const sig = JSON.stringify([p, S.persona, S.login, S.lang, S.transport, S.vscodeInstalled, S.library.total]);
   if (sig === settingsSig && el.childElementCount) return;
   settingsSig = sig;
   el.innerHTML = `
@@ -986,6 +993,11 @@ function renderSettings() {
         <div class="row"><button class="btn" data-do="sync">同步官網進度</button><button class="btn ghost" data-relogin>換帳號</button><button class="btn danger" data-logout>登出</button></div>
         <div id="reloginBox" hidden style="margin-top:12px">${loginForm()}</div>`
       : `<p class="muted" style="margin:4px 0 10px">登入後才能試招、出招、同步你在官網的進度。不需要密碼，只要兩個 cookie。</p>${loginForm()}`}
+      <label class="field" style="max-width:380px;margin-top:14px">提交方式<select id="pfTransport">
+        <option value="browser" ${S.transport === "browser" ? "selected" : ""}>瀏覽器送出（推薦，最不容易被 LeetCode 擋）</option>
+        <option value="direct" ${S.transport === "direct" ? "selected" : ""}>程式直接送出（較快，被擋時自動改用瀏覽器）</option>
+      </select></label>
+      <p class="muted" style="font-size:12px;margin:4px 0 0">瀏覽器送出時，會在背景用一個藏起來的瀏覽器視窗代你提交；只有 LeetCode 要求確認你是真人時，視窗才會跳出來讓你點一下。</p>
     </div>
     <div class="panel">
       <div class="eyebrow">Companion</div>
@@ -1191,6 +1203,11 @@ document.addEventListener("click", async (ev) => {
 document.addEventListener("change", async (ev) => {
   const t = ev.target;
   if (t.matches("input[data-upload]")) return uploadFile(t);
+  if (t.id === "pfTransport") {
+    const st = await act("/api/profile", { transport: t.value });
+    if (st) toast("info", "提交方式已更新", t.selectedOptions[0].textContent);
+    return;
+  }
   if (t.id === "pfPersona") {
     const st = await act("/api/profile", { persona: t.value });
     if (st) { settingsSig = ""; render(); sayLine("greet"); toast("info", `個性換成${persona().name}`, persona().style); }

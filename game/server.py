@@ -275,6 +275,7 @@ def build_state(save, events=None):
         "dayStreak": engine.day_streak(records),
         "langs": [{"id": k, "name": v[2]} for k, v in lc.LANGS.items()],
         "lang": lc.default_lang(),
+        "transport": lc.transport(),
         "workspace": str(lc.ROOT),
         "frozen": lc.FROZEN,
         "browserLogin": bool(browser_login.find_browser()),
@@ -303,7 +304,19 @@ def captured(fn, *a, **kw):
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
+def warm_relay():
+    """玩家選題或看題時，背景先把藏起來的瀏覽器準備好，按出招時就不用等。"""
+    if lc.transport() != "browser" or not logged_in(lc.load_config()):
+        return
+    relay = lc.get_relay()
+    if relay:
+        relay.warm()
+
+
 def api(path, body, query):
+    if path == "/api/relay/status":  # 出招時會一直拿著 LOCK，這個查詢要能同時回應
+        relay = lc._RELAY
+        return relay.status() if relay else {"needsUser": False, "ready": False}
     with LOCK:
         save = load_save()
         problems, records = load_world()
@@ -338,6 +351,12 @@ def api(path, body, query):
                 prof["persona"] = body["persona"]
             if "onboarded" in body:
                 prof["onboarded"] = bool(body["onboarded"])
+            if "transport" in body:
+                if body["transport"] not in ("browser", "direct"):
+                    raise ValueError("沒有這種提交方式")
+                cfg = lc.load_config()
+                cfg["transport"] = body["transport"]
+                lc.save_json(lc.CONFIG_PATH, cfg)
             if "lang" in body:
                 if body["lang"] not in lc.LANGS:
                     raise ValueError("不支援這個語言")
@@ -413,6 +432,7 @@ def api(path, body, query):
             p = find(slug)
             q = lc.fetch_question_detail(p["slug"])
             snippet = lc.get_python_snippet(q)
+            warm_relay()
             return {
                 **problem_brief(p, records), "html": q.get("content") or "",
                 "examples": q.get("exampleTestcases") or "", "snippet": snippet,
@@ -424,6 +444,7 @@ def api(path, body, query):
             p = find(body["slug"])
             fpath, created = lc.create_solution(p)
             how = open_in_editor(fpath)
+            warm_relay()
             return {"file": str(fpath.relative_to(lc.ROOT)), "created": created, "opened": how}
 
         if path == "/api/test":
@@ -491,6 +512,7 @@ def api(path, body, query):
                 fpath, _ = lc.create_solution(p)  # 先建檔，失敗就不算開戰
                 rogue.choose(save, body["slug"])
                 open_in_editor(fpath)
+                warm_relay()
             elif path == "/api/run/reroll":
                 events = rogue.reroll(save, ctx)
             elif path == "/api/run/flee":

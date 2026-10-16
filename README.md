@@ -64,6 +64,15 @@ python lc.py game
 
 不管用哪個方法，cookie 都只存在你電腦上工作區的 `config.json`，不會上傳到任何地方。
 
+### 提交會不會被 LeetCode 擋？
+
+LeetCode 有 Cloudflare 防火牆，程式直接送出的提交，有時會被要求「確認你是真人」。所以遊戲預設**由瀏覽器送出**：
+
+- 背景會開一個藏在螢幕外的瀏覽器視窗（就是登入用的那個），試招、出招都由它代送。對 LeetCode 來說，這就是一般人在用的瀏覽器。
+- 只有 LeetCode 真的要求點「我是真人」時，視窗才會跳到螢幕中間，遊戲裡也會提示；你點完它會自動藏回去，判題繼續。程式不會代替你通過驗證。
+- 你選題或看題時，背景就先把瀏覽器準備好；關掉遊戲時，這個瀏覽器也會一起關掉。
+- 想要最快的速度，可以到「設定 → 帳號 → 提交方式」改成「程式直接送出」，被擋時一樣會自動改用瀏覽器。
+
 ## 在 VS Code 邊寫邊玩
 
 1. 到遊戲的「設定 → 工作區」按「安裝 VS Code 任務」（順便會開啟自動存檔），再按「在 VS Code 開啟工作區」。
@@ -203,7 +212,7 @@ launcher.py           EXE 進入點
 game/engine.py        演算法：技能樹、戰力、推薦
 game/rogue.py         肉鴿遠征：地圖、戰鬥、遺物、強化
 game/server.py        本機伺服器（只聽 127.0.0.1）
-game/browser_login.py 瀏覽器一鍵登入（DevTools Protocol 讀 cookie）
+game/browser_login.py 瀏覽器一鍵登入、瀏覽器代送提交（DevTools Protocol）
 game/static/          遊戲畫面（純 HTML/CSS/JS，沒有外部框架）
 data/problems.json    內建題庫（簡單題）
 build.bat             Windows 打包腳本
