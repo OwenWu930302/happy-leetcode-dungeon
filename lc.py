@@ -77,7 +77,7 @@ CONFIG_PATH = ROOT / "config.json"
 PROBLEMS_PATH = DATA_DIR / "problems.json"
 RECORDS_PATH = DATA_DIR / "records.json"
 
-BASE = "https://leetcode.com"
+BASE = os.environ.get("LCD_BASE", "https://leetcode.com")
 GRAPHQL = f"{BASE}/graphql"
 
 # 解題檔裡用來分隔「設定」與「你的程式碼」的標記（前面會加上該語言的註解符號）
@@ -209,6 +209,71 @@ def check_response(resp: requests.Response, action: str):
         sys.exit(f"❌ 被拒絕（403），原因不明，看起來不是登入過期。\n"
                  f"   LeetCode 的回應開頭：{' '.join(body.split())[:160]}" + tail)
     sys.exit(f"❌ {action}失敗：LeetCode 回應 {resp.status_code}。" + tail)
+
+
+# ---------------------------------------------------------------------------
+# 瀏覽器代送：被 Cloudflare 要求真人驗證時，改從專用瀏覽器（登入用的那個）送出
+# ---------------------------------------------------------------------------
+_RELAY = None
+_RELAY_UNTIL = 0.0
+
+
+class RelayResponse:
+    """把瀏覽器代送的結果包裝成跟 requests.Response 差不多的樣子。"""
+
+    def __init__(self, method, url, status, text, mitigated):
+        self.status_code = status
+        self.text = text
+        self.url = url
+        self.ok = 200 <= status < 300
+        self.headers = requests.structures.CaseInsensitiveDict({"cf-mitigated": mitigated} if mitigated else {})
+        self.request = type("Req", (), {"method": method})()
+
+    def json(self):
+        return json.loads(self.text)
+
+
+def is_challenge(resp) -> bool:
+    if resp.headers.get("cf-mitigated") == "challenge":
+        return True
+    return resp.status_code in (403, 503) and "just a moment" in (resp.text or "")[:3000].lower()
+
+
+def get_relay():
+    global _RELAY
+    if _RELAY is None:
+        try:
+            from game.browser_login import BrowserRelay, find_browser
+        except ImportError:
+            return None
+        if not find_browser():
+            return None
+        _RELAY = BrowserRelay(ROOT / "browser-profile", BASE)
+    return _RELAY
+
+
+def lc_request(session, method, path, payload=None, referer=None, action="請求"):
+    """送 LeetCode 請求；被 Cloudflare 要求真人驗證時，自動改由瀏覽器送出（之後 30 分鐘都走瀏覽器）。"""
+    global _RELAY_UNTIL
+    url = BASE + path
+    relay = None
+    if time.time() < _RELAY_UNTIL:
+        relay = get_relay()
+    if relay is None:
+        resp = session.request(method, url, json=payload if method == "POST" else None,
+                               headers={"Referer": BASE + (referer or "/")}, timeout=30)
+        if not is_challenge(resp):
+            check_response(resp, action)
+            return resp.json()
+        relay = get_relay()
+        if relay is None:
+            check_response(resp, action)  # 沒有瀏覽器可用：照原本的方式回報
+        print("🛡️  LeetCode 要求真人驗證，改用瀏覽器視窗送出…（如果視窗裡出現驗證，請點一下）")
+        _RELAY_UNTIL = time.time() + 1800
+    status, text, mit = relay.request(method, path, payload, referer)
+    resp = RelayResponse(method, url, status, text, mit)
+    check_response(resp, action)
+    return resp.json()
 
 
 def graphql(session: requests.Session, query: str, variables: dict) -> dict:
@@ -542,12 +607,9 @@ def read_solution(p: dict):
 
 def poll_check(session: requests.Session, check_id: str, slug: str) -> dict:
     """輪詢判題結果，直到完成。"""
-    url = f"{BASE}/submissions/detail/{check_id}/check/"
-    headers = {"Referer": f"{BASE}/problems/{slug}/"}
     for _ in range(60):  # 最多等約 60 秒
-        resp = session.get(url, headers=headers, timeout=30)
-        check_response(resp, "取得判題結果")
-        result = resp.json()
+        result = lc_request(session, "GET", f"/submissions/detail/{check_id}/check/",
+                            referer=f"/problems/{slug}/", action="取得判題結果")
         if result.get("state") == "SUCCESS":
             return result
         print("   …判題中", end="\r")
@@ -564,16 +626,12 @@ def run_test(p: dict, data_input=None) -> dict:
     qid, lang, code, _ = read_solution(p)
     session = make_session(require_login=True)
     data_input = data_input if data_input else q["exampleTestcases"]
-    resp = session.post(
-        f"{BASE}/problems/{p['slug']}/interpret_solution/",
-        json={"lang": lang, "question_id": qid, "typed_code": code, "data_input": data_input},
-        headers={"Referer": f"{BASE}/problems/{p['slug']}/"},
-        timeout=30,
-    )
-    check_response(resp, "試跑")
-    interpret_id = resp.json().get("interpret_id")
+    data = lc_request(session, "POST", f"/problems/{p['slug']}/interpret_solution/",
+                      {"lang": lang, "question_id": qid, "typed_code": code, "data_input": data_input},
+                      referer=f"/problems/{p['slug']}/", action="試跑")
+    interpret_id = data.get("interpret_id")
     if not interpret_id:
-        sys.exit(f"❌ 試跑失敗：{resp.text}")
+        sys.exit(f"❌ 試跑失敗：{json.dumps(data, ensure_ascii=False)[:300]}")
     result = poll_check(session, interpret_id, p["slug"])
     result["_input"] = data_input
     return result
@@ -632,16 +690,12 @@ def run_submit(p: dict):
     """正式提交並寫進 records.json。回傳 (判題結果, 是否通過)。"""
     qid, lang, code, _ = read_solution(p)
     session = make_session(require_login=True)
-    resp = session.post(
-        f"{BASE}/problems/{p['slug']}/submit/",
-        json={"lang": lang, "question_id": qid, "typed_code": code},
-        headers={"Referer": f"{BASE}/problems/{p['slug']}/"},
-        timeout=30,
-    )
-    check_response(resp, "提交")
-    submission_id = resp.json().get("submission_id")
+    data = lc_request(session, "POST", f"/problems/{p['slug']}/submit/",
+                      {"lang": lang, "question_id": qid, "typed_code": code},
+                      referer=f"/problems/{p['slug']}/", action="提交")
+    submission_id = data.get("submission_id")
     if not submission_id:
-        sys.exit(f"❌ 提交失敗：{resp.text}")
+        sys.exit(f"❌ 提交失敗：{json.dumps(data, ensure_ascii=False)[:300]}")
 
     result = poll_check(session, str(submission_id), p["slug"])
     accepted = result.get("status_msg") == "Accepted"

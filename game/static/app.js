@@ -180,7 +180,16 @@ const IDLE = [
 ];
 
 /* ================= 小工具 ================= */
-function busy(on, text) { $("#busy").hidden = !on; if (text) $("#busyTxt").textContent = text; }
+let busyHint = null;
+function busy(on, text) {
+  $("#busy").hidden = !on;
+  if (text) $("#busyTxt").textContent = text;
+  clearTimeout(busyHint);
+  // 等比較久時，多半是 LeetCode 要求真人驗證、改用瀏覽器視窗送出
+  if (on && /試招|出招|判題/.test(text || "")) busyHint = setTimeout(() => {
+    $("#busyTxt").textContent = "還在等 LeetCode 回應…如果跳出 LeetCode 視窗要求驗證，請在視窗裡完成";
+  }, 7000);
+}
 
 function toast(kind, title, text = "") {
   if (text === OFFLINE_MSG || title === OFFLINE_MSG) return; // 斷線已經有上方提示條，不重複通知

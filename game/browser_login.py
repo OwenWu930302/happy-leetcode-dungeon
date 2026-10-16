@@ -153,16 +153,11 @@ class MiniWS:
             pass
 
 
-def _local_json(port, path):
+def _local_json(port, path, method="GET"):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 本機連線不走代理
-    with opener.open(f"http://127.0.0.1:{port}{path}", timeout=3) as r:
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method)
+    with opener.open(req, timeout=3) as r:
         return json.loads(r.read().decode("utf-8"))
-
-
-def _free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def pick_cookies(cookies, domain=COOKIE_DOMAIN):
@@ -177,16 +172,74 @@ def pick_cookies(cookies, domain=COOKIE_DOMAIN):
 
 
 # ---------------------------------------------------------------------------
+# 共用：開啟（或接上已經開著的）專用瀏覽器
+# ---------------------------------------------------------------------------
+class BrowserWindow:
+    """專用設定檔的 Edge/Chrome。同一個設定檔只會有一個瀏覽器在跑，已經開著就直接接上。"""
+
+    def __init__(self, profile_dir: Path):
+        self.profile_dir = Path(profile_dir)
+        self.proc = None
+
+    def port(self):
+        """讀 Chromium 寫在設定檔裡的 DevToolsActivePort，確認還連得上。"""
+        f = self.profile_dir / "DevToolsActivePort"
+        try:
+            port = int(f.read_text().split()[0])
+            _local_json(port, "/json/version")
+            return port
+        except (OSError, ValueError, IndexError):
+            return None
+
+    def alive(self):
+        return self.port() is not None
+
+    def open(self, url, size="900,760"):
+        """確保瀏覽器開著並有一個分頁在 url。回傳 (port, target_id)。"""
+        port = self.port()
+        if port:
+            t = _local_json(port, "/json/new?" + url, method="PUT")
+            return port, t.get("id")
+        exe = find_browser()
+        if not exe:
+            raise RuntimeError("找不到 Edge 或 Chrome。")
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            (self.profile_dir / "DevToolsActivePort").unlink()
+        except OSError:
+            pass
+        args = [exe, f"--user-data-dir={self.profile_dir}", "--remote-debugging-port=0",
+                "--remote-debugging-address=127.0.0.1", "--no-first-run", "--no-default-browser-check",
+                "--disable-features=Translate", f"--window-size={size}", f"--app={url}"]
+        extra = os.environ.get("LCD_BROWSER_ARGS")
+        if extra:
+            args[1:1] = extra.split()
+        self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            port = self.port()
+            if port:
+                pages = [t for t in _local_json(port, "/json/list") if t.get("type") == "page"]
+                return port, (pages[0]["id"] if pages else None)
+            if self.proc.poll() is not None:
+                raise RuntimeError("瀏覽器視窗沒有開起來。")
+            time.sleep(0.3)
+        raise RuntimeError("等不到瀏覽器視窗回應。")
+
+    def browser_ws(self, port):
+        return MiniWS(_local_json(port, "/json/version")["webSocketDebuggerUrl"])
+
+
+# ---------------------------------------------------------------------------
 # 登入流程（在背景執行緒跑，前端用 status() 輪詢）
 # ---------------------------------------------------------------------------
 class BrowserLogin:
     def __init__(self, profile_dir: Path, verify):
         """verify(session, csrftoken) -> (username, avatar)；還沒登入時丟 ValueError。"""
-        self.profile_dir = Path(profile_dir)
+        self.win = BrowserWindow(profile_dir)
         self.verify = verify
         self.lock = threading.Lock()
         self.state = {"state": "idle"}
-        self.proc = None
         self.cancelled = False
 
     def status(self):
@@ -207,48 +260,24 @@ class BrowserLogin:
             return self.status()
         self.cancelled = False
         self._set(state="waiting", browser=Path(exe).stem, message="已開啟登入視窗，請在視窗裡登入 LeetCode")
-        threading.Thread(target=self._run, args=(exe, on_success), daemon=True).start()
+        threading.Thread(target=self._run, args=(on_success,), daemon=True).start()
         return self.status()
 
     def cancel(self):
         self.cancelled = True
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
         self._set(state="idle")
 
-    def _run(self, exe, on_success):
-        port = _free_port()
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
-        args = [exe, f"--user-data-dir={self.profile_dir}", f"--remote-debugging-port={port}",
-                "--remote-debugging-address=127.0.0.1", "--no-first-run", "--no-default-browser-check",
-                "--disable-features=Translate", "--window-size=520,760", f"--app={LOGIN_URL}"]
-        extra = os.environ.get("LCD_BROWSER_ARGS")
-        if extra:
-            args[1:1] = extra.split()
+    def _run(self, on_success):
         ws = None
         try:
-            self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            port, target = self.win.open(LOGIN_URL, size="520,760")
+            ws = self.win.browser_ws(port)
             deadline = time.time() + TIMEOUT
-            # 等瀏覽器的除錯介面起來
-            while time.time() < deadline:
-                if self.cancelled:
-                    return
-                if self.proc.poll() is not None:
-                    raise RuntimeError("登入視窗沒有開起來。如果 Edge/Chrome 已經開著同一個設定檔，請先關掉再試。")
-                try:
-                    ws = MiniWS(_local_json(port, "/json/version")["webSocketDebuggerUrl"])
-                    break
-                except (OSError, ValueError, KeyError):
-                    time.sleep(0.4)
-            if ws is None:
-                raise RuntimeError("等不到登入視窗回應")
             last_session = None
             net_errors = 0
             while time.time() < deadline:
                 if self.cancelled:
                     return
-                if self.proc.poll() is not None:
-                    raise RuntimeError("登入視窗被關掉了，還沒拿到登入資訊。")
                 try:
                     cookies = ws.call("Storage.getCookies").get("cookies", [])
                 except (ConnectionError, OSError):
@@ -272,8 +301,9 @@ class BrowserLogin:
                     if user:
                         on_success(sess, csrf, user, avatar)
                         self._set(state="ok", user=user)
-                        try:
-                            ws.call("Browser.close")
+                        try:  # 只關登入分頁；之後代送提交還會用到這個瀏覽器
+                            if target:
+                                ws.call("Target.closeTarget", {"targetId": target})
                         except Exception:  # noqa: BLE001
                             pass
                         return
@@ -285,6 +315,100 @@ class BrowserLogin:
         finally:
             if ws:
                 ws.close()
-            if self.proc and self.proc.poll() is None and self.status().get("state") != "ok":
-                # 失敗時不強制關掉視窗，讓使用者自己關；成功時已經用 Browser.close 關了
+
+
+# ---------------------------------------------------------------------------
+# 瀏覽器代送：LeetCode 的防火牆（Cloudflare）要求真人驗證時，改從真正的瀏覽器送出
+# ---------------------------------------------------------------------------
+FETCH_JS = r"""
+(async () => {
+  const csrf = (document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/) || [])[1] || "";
+  const opt = { method: %(method)s, credentials: "include", referrer: %(referer)s,
+                headers: { "content-type": "application/json", "x-csrftoken": csrf } };
+  if (%(body)s !== null) opt.body = %(body)s;
+  const r = await fetch(%(path)s, opt);
+  return { status: r.status, text: await r.text(), mitigated: r.headers.get("cf-mitigated") || "" };
+})()
+"""
+
+
+class BrowserRelay:
+    """在專用瀏覽器的 leetcode.com 分頁裡執行 fetch。
+
+    請求是由真正的瀏覽器送出（同樣的登入 cookie、同樣的瀏覽器特徵），所以 Cloudflare 會正常放行；
+    如果它真的要求點「我是真人」，視窗是開著的，使用者自己點一下就好。程式不會代替人通過驗證。
+    """
+
+    def __init__(self, profile_dir: Path, base="https://leetcode.com"):
+        self.win = BrowserWindow(profile_dir)
+        self.base = base.rstrip("/")
+        self.page = None  # MiniWS 連到 leetcode 分頁
+        self.target = None
+
+    def _eval(self, expr, timeout=60):
+        self.page.sock.settimeout(timeout)
+        res = self.page.call("Runtime.evaluate", {"expression": expr, "awaitPromise": True, "returnByValue": True})
+        if res.get("exceptionDetails"):
+            raise RuntimeError("瀏覽器裡的請求失敗：" + json.dumps(res["exceptionDetails"].get("exception", {}).get("description", ""))[:200])
+        return res.get("result", {}).get("value")
+
+    def _connect(self, url):
+        if self.page:
+            try:
+                origin = self._eval("location.origin", timeout=5)
+                if origin == self.base:
+                    return
+            except Exception:  # noqa: BLE001  分頁被關掉了，重新開
                 pass
+            self.page.close()
+            self.page = None
+        port = self.win.port()
+        existing = []
+        if port:  # 瀏覽器已經開著：優先重用已經在 LeetCode 上的分頁，不要一直開新分頁
+            existing = [t for t in _local_json(port, "/json/list")
+                        if t.get("type") == "page" and t.get("url", "").startswith(self.base)]
+        if existing:
+            target = existing[0]["id"]
+        else:
+            port, target = self.win.open(url)
+        pages = [t for t in _local_json(port, "/json/list") if t.get("type") == "page"]
+        page = next((t for t in pages if t.get("id") == target), None) or next(
+            (t for t in pages if t.get("url", "").startswith(self.base)), None) or (pages[0] if pages else None)
+        if not page:
+            raise RuntimeError("找不到 LeetCode 分頁。")
+        self.target = page["id"]
+        self.page = MiniWS(page["webSocketDebuggerUrl"], timeout=60)
+
+    def _wait_ready(self, timeout):
+        """等頁面載完、而且不在 Cloudflare 的驗證頁上。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                st = self._eval("[location.origin, document.readyState, document.title].join('|')", timeout=10)
+            except (RuntimeError, ConnectionError, OSError, socket.timeout):
+                st = ""
+            origin, ready, title = (st.split("|", 2) + ["", "", ""])[:3]
+            if origin == self.base and ready == "complete" and "just a moment" not in title.lower():
+                return True
+            time.sleep(1.0)
+        return False
+
+    def request(self, method, path, payload=None, referer=None, wait=150):
+        """回傳 (狀態碼, 內容文字, cf-mitigated)。"""
+        url = self.base + (referer or "/problemset/")
+        self._connect(url)
+        if not self._wait_ready(wait):
+            raise SystemExit("❌ LeetCode 要求真人驗證：請在跳出的 LeetCode 視窗裡完成驗證，再按一次出招。")
+        expr = FETCH_JS % {
+            "method": json.dumps(method), "referer": json.dumps(url), "path": json.dumps(path),
+            "body": json.dumps(json.dumps(payload)) if payload is not None else "null",
+        }
+        out = self._eval(expr, timeout=60) or {}
+        if out.get("mitigated") == "challenge":
+            # 瀏覽器也被要求驗證：重新載入頁面讓驗證出現在視窗裡，等使用者完成後再送一次
+            self.page.call("Page.navigate", {"url": url})
+            time.sleep(1.5)
+            if not self._wait_ready(wait):
+                raise SystemExit("❌ LeetCode 要求真人驗證：請在跳出的 LeetCode 視窗裡完成驗證，再按一次出招。")
+            out = self._eval(expr, timeout=60) or {}
+        return out.get("status", 0), out.get("text", ""), out.get("mitigated", "")
