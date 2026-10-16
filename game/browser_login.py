@@ -154,6 +154,40 @@ class MiniWS:
             pass
 
 
+# ---------------------------------------------------------------------------
+# Windows：把瀏覽器視窗整個藏起來（連工作列圖示都不出現）
+# ---------------------------------------------------------------------------
+def _win32_show_windows(pid, show):
+    """把屬於 pid 這個瀏覽器的頂層視窗隱藏或顯示。只在 Windows 有作用，失敗就算了。"""
+    if os.name != "nt" or not pid:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        hwnds = []
+        proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def each(hwnd, _):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value == pid:
+                cls = ctypes.create_unicode_buffer(64)
+                user32.GetClassNameW(hwnd, cls, 64)
+                if cls.value.startswith("Chrome_WidgetWin") and user32.GetWindowTextLengthW(hwnd) > 0:
+                    hwnds.append(hwnd)
+            return True
+
+        user32.EnumWindows(proto(each), 0)
+        for h in hwnds:
+            user32.ShowWindow(h, 5 if show else 0)  # SW_SHOW / SW_HIDE
+            if show:
+                user32.SetForegroundWindow(h)
+        return bool(hwnds)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _local_json(port, path, method="GET"):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 本機連線不走代理
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method)
@@ -181,6 +215,7 @@ class BrowserWindow:
     def __init__(self, profile_dir: Path):
         self.profile_dir = Path(profile_dir)
         self.proc = None
+        self.hidden_launch = False
 
     def port(self):
         """讀 Chromium 寫在設定檔裡的 DevToolsActivePort，確認還連得上。"""
@@ -217,16 +252,25 @@ class BrowserWindow:
                 "--remote-debugging-address=127.0.0.1", "--no-first-run", "--no-default-browser-check",
                 "--disable-features=Translate", f"--window-size={size}", f"--app={url}"]
         if hidden:
-            args.insert(-1, "--window-position=-32000,-32000")
+            # 開在螢幕外，並關掉瀏覽器對背景視窗的節流，藏起來也照常運作
+            args[-1:-1] = ["--window-position=-32000,-32000", "--disable-backgrounding-occluded-windows",
+                           "--disable-renderer-backgrounding", "--disable-background-timer-throttling"]
         extra = os.environ.get("LCD_BROWSER_ARGS")
         if extra:
             args[1:1] = extra.split()
         self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.hidden_launch = hidden
         deadline = time.time() + 30
         while time.time() < deadline:
             port = self.port()
             if port:
                 pages = [t for t in _local_json(port, "/json/list") if t.get("type") == "page"]
+                if hidden:
+                    # Windows：視窗一出現就整個藏起來（不顯示在工作列）
+                    for _ in range(20):
+                        if _win32_show_windows(self.proc.pid, False) or os.name != "nt":
+                            break
+                        time.sleep(0.15)
                 return port, (pages[0]["id"] if pages else None)
             if self.proc.poll() is not None:
                 raise RuntimeError("瀏覽器視窗沒有開起來。")
@@ -257,6 +301,8 @@ class BrowserWindow:
         finally:
             if ws:
                 ws.close()
+        if self.proc is not None:
+            _win32_show_windows(self.proc.pid, visible)
 
     def close_browser(self):
         port = self.port()
