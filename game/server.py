@@ -39,6 +39,25 @@ ASSET_DIR = lc.ROOT / "assets"
 MAX_UPLOAD = 6 * 1024 * 1024
 IMAGE_MAGIC = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpg", b"GIF8": "gif", b"RIFF": "webp"}
 BACKGROUNDS = ["dungeon", "starry", "sakura", "abyss", "ember", "forest", "plain"]
+COMPANIONS = {c["id"]: c for c in json.loads((STATIC / "companions.json").read_text(encoding="utf-8"))["companions"]}
+
+
+def persona_of(prof):
+    """目前的看板娘個性：有指定就用指定的，否則跟著頭像；上傳頭像時預設露緹。"""
+    pid = prof.get("persona")
+    if pid in COMPANIONS:
+        return pid
+    return prof.get("avatar") if prof.get("avatar") in COMPANIONS else "p0"
+
+
+def strategy(prof=None):
+    st = dict(COMPANIONS[persona_of(prof or load_profile())]["strategy"])
+    st.setdefault("mode", "balanced")
+    st.setdefault("offset", 80)
+    st.setdefault("width", 180)
+    return st
+
+
 PROFILE_DEFAULT = {"name": "", "companion": "露緹", "avatar": "p0", "bg": "dungeon", "dim": 0.55,
                    "onboarded": False, "lcUser": None, "lcAvatar": None, "uploads": {}}
 TOKEN = secrets.token_urlsafe(16)
@@ -121,7 +140,9 @@ def context(problems, records):
         engine.set_ratings(lc.load_ratings())
     tree = engine.build_tree(problems, records)
     power = engine.compute_power(problems, records, contest=lc.load_json(lc.DATA_DIR / "contest.json", None))
-    return {"problems": problems, "records": records, "tree": tree, "power": power}
+    st = strategy()
+    return {"problems": problems, "records": records, "tree": tree, "power": power,
+            "mode": st["mode"], "strategy": st}
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +244,9 @@ def build_state(save, events=None):
         if cur and cur.get("chosen") and cur["chosen"] in by_slug:
             run_view["chosen"] = problem_brief(by_slug[cur["chosen"]], records)
 
-    picks = engine.recommend(problems, records, ctx["tree"], power, k=3, seed=f"daily:{date.today()}")
+    st = ctx["strategy"]
+    picks = engine.recommend(problems, records, ctx["tree"], power, k=3, seed=f"daily:{date.today()}:{st['mode']}",
+                             mode=st["mode"], offset=st["offset"], width=st["width"])
     cfg = lc.load_config()
     solved_recent = sorted(
         [{"slug": s, "id": r.get("id"), "title": r.get("title"), "difficulty": r.get("difficulty"),
@@ -248,6 +271,8 @@ def build_state(save, events=None):
                     "allDifficulties": any(p.get("difficulty") != "Easy" for p in problems)},
         "login": logged_in(cfg),
         "profile": {k: v for k, v in load_profile().items()},
+        "persona": persona_of(load_profile()),
+        "dayStreak": engine.day_streak(records),
         "langs": [{"id": k, "name": v[2]} for k, v in lc.LANGS.items()],
         "lang": lc.default_lang(),
         "workspace": str(lc.ROOT),
@@ -307,6 +332,10 @@ def api(path, body, query):
                 prof["bg"] = bg
             if "dim" in body:
                 prof["dim"] = max(0.0, min(0.9, float(body["dim"])))
+            if "persona" in body:
+                if body["persona"] not in COMPANIONS:
+                    raise ValueError("沒有這位看板娘")
+                prof["persona"] = body["persona"]
             if "onboarded" in body:
                 prof["onboarded"] = bool(body["onboarded"])
             if "lang" in body:
@@ -419,15 +448,19 @@ def api(path, body, query):
 
         if path == "/api/recommend":
             ctx = context(problems, records)
+            st = ctx["strategy"]
             return {"items": engine.recommend(
                 problems, records, ctx["tree"], ctx["power"], k=int(body.get("k", 5)),
-                tag=body.get("tag"), seen=save["meta"]["ads_seen"], seed=body.get("seed"))}
+                tag=body.get("tag"), seen=save["meta"]["ads_seen"], seed=body.get("seed"),
+                mode=st["mode"], offset=st["offset"], width=st["width"])}
 
         if path == "/api/ad":
             ctx = context(problems, records)
+            st = ctx["strategy"]
             items = engine.recommend(problems, records, ctx["tree"], ctx["power"], k=1,
                                      seen=save["meta"]["ads_seen"],
-                                     exclude=set(save["meta"]["bounties"]))
+                                     exclude=set(save["meta"]["bounties"]),
+                                     mode=st["mode"], offset=st["offset"], width=st["width"])
             if items:
                 save["meta"]["ads_seen"] = (save["meta"]["ads_seen"] + [items[0]["slug"]])[-40:]
                 write_save(save)
@@ -438,7 +471,7 @@ def api(path, body, query):
             p = find(body["slug"])
             rec = {"slug": p["slug"], "title": p["title"], "difficulty": p["difficulty"],
                    "xp": engine.DIFF_XP.get(p["difficulty"], 10)}
-            rogue.accept_bounty(save, rec)
+            rogue.accept_bounty(save, rec, was_solved=bool((records.get(p["slug"]) or {}).get("solved")))
             write_save(save)
             fpath, _ = lc.create_solution(p)
             open_in_editor(fpath)
@@ -450,7 +483,7 @@ def api(path, body, query):
             if path == "/api/run/start":
                 if save.get("run") and save["run"]["status"] == "active":
                     raise ValueError("遠征還在進行中")
-                rogue.start_run(save)
+                rogue.start_run(save, persona=persona_of(load_profile()))
             elif path == "/api/run/enter":
                 events = rogue.enter(save, body["key"], ctx)
             elif path == "/api/run/choose":

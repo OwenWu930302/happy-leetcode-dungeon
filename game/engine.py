@@ -385,30 +385,135 @@ def compute_power(problems, records, contest=None):
 # ---------------------------------------------------------------------------
 # 3. 推薦
 # ---------------------------------------------------------------------------
-def score_problem(p, rating, tree_by_id, per_tag, offset=80, width=180):
+# 琥珀（系統化策略）推題時附上的觀念提示
+CONCEPTS = {
+    "array": "用索引直接存取，常搭配一次走訪 O(n)",
+    "string": "字元走訪、切片與比較，注意不可變的成本",
+    "hash-table": "用空間換時間：O(1) 查詢「看過沒」",
+    "math": "先找規律或公式，避免硬算",
+    "sorting": "排序後很多問題會變簡單（O(n log n)）",
+    "two-pointers": "左右夾擊或快慢指標，把 O(n²) 壓到 O(n)",
+    "sliding-window": "維護一段連續區間，右邊擴張、左邊收縮",
+    "stack": "後進先出，處理配對與「下一個更大」",
+    "monotonic-stack": "維持單調性，一次找出每個元素的下一個更大/更小",
+    "queue": "先進先出，常用在 BFS",
+    "linked-list": "指標操作，畫圖比想像可靠",
+    "binary-search": "每次砍一半；也能「對答案二分」",
+    "tree": "遞迴：先想清楚子樹要回傳什麼",
+    "binary-tree": "前中後序與層序走訪",
+    "binary-search-tree": "左小右大，中序走訪是排序好的",
+    "depth-first-search": "一路走到底再回頭，常用遞迴",
+    "breadth-first-search": "一層一層往外擴，求最短步數",
+    "graph": "點與邊：先決定用鄰接表還是矩陣",
+    "heap-priority-queue": "隨時拿到最大或最小值（O(log n)）",
+    "greedy": "每步拿當下最好的，要能說服自己局部最佳會導向全域最佳",
+    "dynamic-programming": "定義狀態、寫出轉移、設好初始值",
+    "backtracking": "選了再撤銷，搭配剪枝",
+    "bit-manipulation": "XOR 自我抵銷、lowbit、位元遮罩",
+    "prefix-sum": "預先累加，任意區間和 O(1)",
+    "matrix": "二維走訪，注意邊界與方向陣列",
+    "simulation": "照題目一步步做，細心處理每種情況",
+    "counting": "先數每種東西出現幾次",
+    "recursion": "相信遞迴：假設小問題已經解好",
+    "design": "先決定資料結構，再實作每個操作",
+    "trie": "把字串拆成路徑的樹，前綴查詢很快",
+    "union-find": "合併集合、查同一群，記得路徑壓縮",
+    "enumeration": "列舉所有可能，確認規模夠小",
+    "geometry": "座標、向量與面積公式",
+    "number-theory": "質數、最大公因數、同餘",
+}
+
+
+def day_streak(records, today=None):
+    """連續幾天有通過的提交（今天還沒刷的話，從昨天往回算）。"""
+    from datetime import date, timedelta
+    days = set()
+    for r in records.values():
+        for a in r.get("attempts", []):
+            if a.get("accepted") and a.get("time"):
+                days.add(a["time"][:10])
+    d = today or date.today()
+    if d.isoformat() not in days:
+        d -= timedelta(days=1)
+    n = 0
+    while d.isoformat() in days:
+        n += 1
+        d -= timedelta(days=1)
+    return n
+
+
+def score_problem(p, rating, tree_by_id, per_tag, offset=80, width=180, mode="balanced", max_layer=1):
+    """替一題打分。mode 是看板娘的推薦策略，決定各種加成的權重。"""
     pr = problem_rating(p)
     target = rating + offset
     fit = math.exp(-((pr - target) / width) ** 2)
+    w_front, w_weak, w_lock = 0.6, 1.0, -0.25
+    if mode == "comfort":
+        w_front, w_weak = 0.3, 0.3
+    elif mode == "weakest":
+        w_front, w_weak = 0.3, 2.2
+    elif mode == "tree":
+        w_front, w_lock = 1.0, -0.9
+    elif mode == "explore":
+        w_weak = 0.4
     bonus, why = 0.0, []
-    for t in p.get("tags", []):
-        node = tree_by_id.get(t)
-        if not node:
-            continue
+    tags = [t for t in p.get("tags", []) if t in tree_by_id]
+    for t in tags:
+        node = tree_by_id[t]
         if node["unlocked"] and node["level"] < 2:
-            bonus += 0.6
+            bonus += w_front
             why.append(("frontier", t))
         elif not node["unlocked"]:
-            bonus -= 0.25
+            bonus += w_lock
         tr = per_tag.get(t, {}).get("rating")
         if tr is not None and tr < rating - 30:
-            bonus += min(0.6, (rating - tr) / 300)
+            bonus += w_weak * min(0.6, (rating - tr) / 300)
             why.append(("weak", t))
-    return fit * (1 + max(-0.5, bonus)), pr, why
+    ac = p.get("acRate") or 50
+    if mode == "comfort":
+        bonus += (ac - 55) / 40
+        if ac >= 65:
+            why.insert(0, ("easywin", ac))
+    elif mode == "daily":
+        bonus += (0.5 if p.get("difficulty") == "Easy" else -0.6) + (ac - 55) / 60
+        why.insert(0, ("daily", ac))
+    elif mode == "tree":
+        layers = [tree_by_id[t]["layer"] for t in tags if tree_by_id[t]["unlocked"]]
+        if layers:
+            bonus += 0.6 * (1 - min(layers) / max(1, max_layer))
+        if any(t in CONCEPTS for t in tags):
+            why.insert(0, ("concept", next(t for t in tags if t in CONCEPTS)))
+    elif mode == "explore":
+        unseen = [t for t in tags if tree_by_id[t]["solved"] == 0]
+        bonus += min(1.6, 0.8 * len(unseen))
+        if unseen:
+            why.insert(0, ("unseen", unseen[0]))
+    elif mode == "contest":
+        if p.get("slug") in RATINGS:
+            bonus += 1.0
+            why.insert(0, ("contest", None))
+        else:
+            bonus -= 0.6
+    return fit * (1 + max(-0.7, bonus)), pr, why
 
 
 def explain(p, pr, rating, why, tree_by_id):
     diff = pr - rating
     lines = []
+    for kind, t in why:
+        if kind == "easywin":
+            lines.append(f"通過率 {t}%，很好拿下")
+        elif kind == "daily":
+            lines.append("短小好上手，今天就能打卡")
+        elif kind == "concept":
+            lines.append(f"觀念：{CONCEPTS[t]}")
+        elif kind == "unseen":
+            lines.append(f"你還沒碰過「{tree_by_id[t]['name']}」")
+        elif kind == "contest":
+            lines.append("LeetCode 週賽真題")
+        else:
+            continue
+        break
     for kind, t in why:
         if kind == "frontier":
             node = tree_by_id[t]
@@ -430,39 +535,89 @@ def explain(p, pr, rating, why, tree_by_id):
     return lines[:2]
 
 
+def _item(p, pr, s, reasons, tree_by_id, review=False):
+    return {
+        "slug": p["slug"], "id": p["id"], "title": p["title"],
+        "difficulty": p["difficulty"], "acRate": p.get("acRate"),
+        "tags": [t for t in p.get("tags", []) if t in tree_by_id],
+        "tagNames": [tree_by_id[t]["name"] for t in p.get("tags", []) if t in tree_by_id],
+        "rating": pr, "score": round(s, 3), "xp": DIFF_XP.get(p["difficulty"], 10),
+        "reasons": reasons, "review": review,
+    }
+
+
+def _weighted_pick(rng, pool, k):
+    picked = []
+    pool = list(pool)
+    while pool and len(picked) < k:
+        weights = [c[0] ** 2 + 1e-9 for c in pool]
+        i = rng.choices(range(len(pool)), weights=weights)[0]
+        picked.append(pool.pop(i))
+    return picked
+
+
+def review_candidates(problems, records, exclude=(), now=None):
+    """星璃的複習清單：以前答錯過、或很久沒碰的已解題（間隔重複）。"""
+    from datetime import datetime
+    now = now or datetime.now()
+    by_slug = {p["slug"]: p for p in problems}
+    out = []
+    for slug, r in records.items():
+        p = by_slug.get(slug)
+        if not r.get("solved") or not p or not playable(p) or slug in exclude:
+            continue
+        times = [a.get("time") for a in r.get("attempts", []) if a.get("time")]
+        try:
+            last = datetime.strptime(max(times), "%Y-%m-%d %H:%M:%S") if times else None
+        except ValueError:
+            last = None
+        days = (now - last).days if last else 30
+        wrong = sum(1 for a in r.get("attempts", []) if a.get("accepted") is False)
+        if days < 3 and not wrong:
+            continue
+        s = min(1.0, days / 14) * 0.7 + min(0.6, wrong * 0.2) + 0.1
+        why = f"以前答錯 {wrong} 次，再練一次會更穩" if wrong else f"{days} 天前解過，該複習了"
+        out.append((s, p, problem_rating(p), why))
+    out.sort(key=lambda c: -c[0])
+    return out
+
+
 def recommend(problems, records, tree, power, k=5, offset=80, width=180,
-              exclude=(), seen=(), tag=None, seed=None):
-    """挑出 k 題推薦。高分題機率高，但保留隨機性，每次推的不一樣。"""
+              exclude=(), seen=(), tag=None, seed=None, mode="balanced"):
+    """挑出 k 題推薦。高分題機率高，但保留隨機性，每次推的不一樣。
+
+    mode 是看板娘的推薦策略：balanced 均衡、comfort 舒適、daily 打卡、weakest 弱點、
+    tree 技能樹順序、explore 探索、contest 競賽、review 複習。
+    """
     rng = random.Random(seed)
     solved = {s for s, r in records.items() if r.get("solved")}
     tree_by_id = {n["id"]: n for n in tree["nodes"]}
     rating, per_tag = power["rating"], power["per_tag"]
+    max_layer = max([n["layer"] for n in tree["nodes"]] or [1])
     seen = list(seen)
+
+    out = []
+    if mode == "review" and not tag:
+        rev = review_candidates(problems, records, exclude)
+        n_rev = min(len(rev), (k * 2 + 2) // 3)
+        for s, p, pr, why in _weighted_pick(rng, rev[: max(n_rev * 4, 8)], n_rev):
+            out.append(_item(p, pr, s, [why, f"難度 {pr}"], tree_by_id, review=True))
+        k -= len(out)
+        mode = "balanced"
+        if k <= 0:
+            return out
+
     cands = []
     for p in problems:
         if not playable(p) or p["slug"] in solved or p["slug"] in exclude:
             continue
         if tag and tag not in p.get("tags", []):
             continue
-        s, pr, why = score_problem(p, rating, tree_by_id, per_tag, offset, width)
+        s, pr, why = score_problem(p, rating, tree_by_id, per_tag, offset, width, mode, max_layer)
         if p["slug"] in seen:
             s *= 0.3
         cands.append((s, p, pr, why))
     cands.sort(key=lambda c: -c[0])
-    pool = cands[: max(k * 6, 20)]
-    picked = []
-    while pool and len(picked) < k:
-        weights = [c[0] ** 2 + 1e-9 for c in pool]
-        i = rng.choices(range(len(pool)), weights=weights)[0]
-        picked.append(pool.pop(i))
-    out = []
-    for s, p, pr, why in picked:
-        out.append({
-            "slug": p["slug"], "id": p["id"], "title": p["title"],
-            "difficulty": p["difficulty"], "acRate": p.get("acRate"),
-            "tags": [t for t in p.get("tags", []) if t in tree_by_id],
-            "tagNames": [tree_by_id[t]["name"] for t in p.get("tags", []) if t in tree_by_id],
-            "rating": pr, "score": round(s, 3), "xp": DIFF_XP.get(p["difficulty"], 10),
-            "reasons": explain(p, pr, rating, why, tree_by_id),
-        })
+    for s, p, pr, why in _weighted_pick(rng, cands[: max(k * 6, 20)], k):
+        out.append(_item(p, pr, s, explain(p, pr, rating, why, tree_by_id), tree_by_id))
     return out

@@ -80,7 +80,7 @@ def _crosses(edges, r, c, d):
     return False
 
 
-def gen_map(rng):
+def gen_map(rng, mystery_boost=False):
     edges = set()
     starts = []
     for i in range(6):
@@ -108,7 +108,7 @@ def gen_map(rng):
         elif r == ROWS - 1:
             t = "camp"
         else:
-            bag = [("fight", 45), ("mystery", 20)]
+            bag = [("fight", 45), ("mystery", 34 if mystery_boost else 20)]
             if r >= 2:
                 bag.append(("shop", 9))
             if r >= 3:
@@ -171,7 +171,7 @@ def _add_relic(run, rid):
     _log(run, f"獲得遺物「{RELICS[rid][0]}」")
 
 
-def start_run(save, seed=None):
+def start_run(save, seed=None, persona="p0"):
     meta = save["meta"]
     seed = seed if seed is not None else random.randrange(1 << 30)
     rng = random.Random(seed)
@@ -180,8 +180,9 @@ def start_run(save, seed=None):
     run = {
         "seed": seed, "started_at": NOW(), "status": "active",
         "hp": max_hp, "max_hp": max_hp, "gold": 25 * ups.get("purse", 0),
-        "relics": [], "map": gen_map(rng), "pos": None, "cleared": [],
+        "relics": [], "map": gen_map(rng, mystery_boost=(persona == "p5")), "pos": None, "cleared": [],
         "current": None, "pending": None, "xp": 0, "kills": 0, "log": [], "used_slugs": [],
+        "persona": persona, "streak": 0, "dayStreak": 0,
     }
     if ups.get("starter"):
         _add_relic(run, rng.choice(list(RELICS)))
@@ -215,11 +216,14 @@ def _offers(run, ctx, ntype, salt=""):
             per = ctx["power"]["per_tag"]
             weakest = min(cands, key=lambda n: (n["level"], per.get(n["id"], {}).get("rating", ctx["power"]["rating"]), -n["total"]))
             tag = weakest["id"]
+    mode = ctx.get("mode", "balanced")
+    if mode == "review":
+        mode = "balanced"  # 遠征打的是新怪，複習留給酒館
     recs = engine.recommend(
         ctx["problems"], ctx["records"], ctx["tree"], ctx["power"],
         k=spec["k"], offset=spec["offset"], width=160 if ntype == "fight" else 220,
         exclude=set(run["used_slugs"]), tag=tag,
-        seed=f"{run['seed']}:{run['pos']}:{salt}",
+        seed=f"{run['seed']}:{run['pos']}:{salt}", mode=mode,
     )
     if not recs and tag:
         recs = engine.recommend(ctx["problems"], ctx["records"], ctx["tree"], ctx["power"],
@@ -313,6 +317,11 @@ def _damage(run, cur):
         atk *= 0.7
     if cur["type"] == "boss" and _has(run, "leet_crown"):
         atk *= 0.5
+    persona = run.get("persona")
+    if persona == "p3":  # 雪奈：嚴格，答錯更痛
+        atk *= 1.2
+    if persona == "p6" and cur["type"] == "boss":  # 珂可：Boss 戰老手
+        atk *= 0.7
     if _has(run, "rubber_duck") and cur["wrong"] == 0:
         atk = 0
     return int(round(atk))
@@ -328,6 +337,16 @@ def _win(save, cur, problem):
     t = cur["type"]
     base_xp = engine.DIFF_XP.get(problem.get("difficulty"), 10)
     mult = {"fight": 1, "elite": 2, "boss": 3}[t] * (1.3 if _has(run, "big_o") else 1) * _scholar(save)
+    persona = run.get("persona")
+    run["streak"] = run.get("streak", 0) + 1 if cur.get("wrong", 0) == 0 else 0
+    if persona == "p1":  # 米菈：連勝加成
+        mult *= 1 + min(0.3, 0.1 * run["streak"])
+    elif persona == "p2":  # 夏音：連續天數加成
+        mult *= 1 + min(0.21, 0.03 * run.get("dayStreak", 0))
+    elif persona == "p3":  # 雪奈：經驗 +25%
+        mult *= 1.25
+    elif persona == "p6" and t == "boss":  # 珂可：Boss 經驗 +30%
+        mult *= 1.3
     xp = int(round(base_xp * mult))
     run["xp"] += xp
     gold = {"fight": rng.randint(14, 24), "elite": rng.randint(30, 42), "boss": 80}[t]
@@ -384,6 +403,7 @@ def resolve(save, records, problems_by_slug):
     if not run or run["status"] != "active" or not run["current"] or not run["current"]["chosen"]:
         return events
     cur = run["current"]
+    run["dayStreak"] = engine.day_streak(records)
     slug = cur["chosen"]
     rec = records.get(slug) or {}
     problem = problems_by_slug.get(slug) or {"title": rec.get("title", slug), "difficulty": rec.get("difficulty", "Easy"), "tags": []}
@@ -396,6 +416,7 @@ def resolve(save, records, problems_by_slug):
             return events + _win(save, cur, problem)
         dmg = _damage(run, cur)
         cur["wrong"] += 1
+        run["streak"] = 0
         _heal(run, -dmg)
         events.append({"kind": "hit", "dmg": dmg, "status": a.get("status")})
         _log(run, f"{a.get('status') or '答錯'}！受到 {dmg} 點傷害" if dmg else "答錯了，小黃鴨幫你擋下這一擊")
@@ -410,6 +431,7 @@ def flee(save):
     if not cur:
         raise ValueError("現在沒有在戰鬥")
     dmg = int(NODE_TYPES[cur["type"]]["atk"] * 1.5)
+    run["streak"] = 0
     _heal(run, -dmg)
     run["cleared"].append(cur["key"])
     run["current"] = None
@@ -436,6 +458,8 @@ def act(save, action, arg=None):
     elif kind == "camp":
         if action == "rest":
             amt = int(run["max_hp"] * 0.3) * (2 if _has(run, "recursion_mirror") else 1)
+            if run.get("persona") == "p7":  # 星璃：篝火回血 ×1.5
+                amt = int(amt * 1.5)
             got = _heal(run, amt)
             _log(run, f"在篝火旁休息，HP +{got}")
         elif action == "train":
@@ -491,9 +515,10 @@ def buy_upgrade(save, uid):
 # ---------------------------------------------------------------------------
 # 賞金任務（廣告推薦接受後）：在期限內解掉就拿雙倍經驗與結晶
 # ---------------------------------------------------------------------------
-def accept_bounty(save, rec):
+def accept_bounty(save, rec, was_solved=False):
     save["meta"]["bounties"][rec["slug"]] = {
         "title": rec["title"], "difficulty": rec["difficulty"], "accepted_at": NOW(), "xp": rec["xp"],
+        "review": bool(was_solved),  # 複習題：一定要在接下之後重新通過一次才算
     }
 
 
@@ -505,7 +530,7 @@ def resolve_bounties(save, records):
         if not r.get("solved"):
             continue
         ok = any(a.get("accepted") and (a.get("time") or "") >= b[slug]["accepted_at"] for a in r.get("attempts", []))
-        if ok or r.get("solved_via"):
+        if ok or (r.get("solved_via") and not b[slug].get("review")):
             info = b.pop(slug)
             bonus = int(info["xp"] * _scholar(save))
             save["meta"]["bonus_xp"] += bonus

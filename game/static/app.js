@@ -164,6 +164,17 @@ document.body.dataset.bg = "dungeon";
 $("#mascotBox").innerHTML = avatarSVG("p0");
 $("#mascotBox").addEventListener("click", () => setTab("settings"));
 
+/* ---------- 看板娘個性 ---------- */
+let COMP = {};   // id -> 角色資料（companions.json）
+const persona = () => COMP[(S && S.persona) || "p0"] || COMP.p0 || { name: "露緹", lines: {} };
+const compName = () => (S && S.profile && S.profile.companion) || persona().name || "露緹";
+function line(key, fallback = "") {
+  const pool = (persona().lines || {})[key] || ((COMP.p0 || {}).lines || {})[key] || [fallback];
+  const t = pool[Math.floor(Math.random() * pool.length)] || fallback;
+  return esc(t).replace(/\{name\}/g, `<em>${esc((S && S.profile && S.profile.name) || "獵題人")}</em>`);
+}
+function sayLine(key, extra = "") { say(line(key) + extra); }
+
 function say(html, bounce = true) {
   $("#say").innerHTML = html;
   if (bounce) {
@@ -254,8 +265,8 @@ function applyState(st) {
   if (!firstLoad) {
     const newly = [...lit].filter((id) => !prevLit.has(id));
     newly.forEach((id, i) => setTimeout(() => toast("win", `技能點亮：${nodeName(id)}`, "下一環的技能解鎖了"), 400 + i * 500));
-    if (newly.length) { confetti(60); say(`<em>${newly.map(nodeName).join("、")}</em> 點亮了！去技能樹看看吧。`); }
-    if (st.player.level > prevLevel) { toast("win", `升級！LV ${st.player.level}`, st.player.title); confetti(120); }
+    if (newly.length) { confetti(60); say(`<em>${newly.map(nodeName).join("、")}</em>：` + line("lit")); }
+    if (st.player.level > prevLevel) { toast("win", `升級！LV ${st.player.level}`, st.player.title); confetti(120); sayLine("levelup"); }
   }
   prevLit = lit; prevLevel = st.player.level;
   handleEvents(st.events || [], old);
@@ -268,30 +279,30 @@ function handleEvents(evts) {
     if (e.kind === "hit") {
       hitFx();
       toast("hit", e.dmg ? `受到 ${e.dmg} 點傷害` : "小黃鴨擋下了這一擊", e.status || "答錯了");
-      say(e.status === "Time Limit Exceeded" ? "太慢了！想想看能不能少一層迴圈？" :
-          e.status === "Runtime Error" ? "程式炸掉了，檢查一下索引和空輸入。" : "痛！再看一次邊界條件和題目要求……");
+      const hint = e.status === "Time Limit Exceeded" ? "（超時：想想能不能少一層迴圈）" : e.status === "Runtime Error" ? "（執行錯誤：檢查索引和空輸入）" : "";
+      sayLine("hit", hint);
     } else if (e.kind === "win") {
       confetti();
       toast("win", `擊敗「${e.title}」！`, `經驗 +${e.xp}　金幣 +${e.gold}`);
-      say(["漂亮！這一擊乾淨俐落。", "贏了！往下一個節點前進吧。", "好強……你的戰力又往上爬了。"][Math.floor(Math.random() * 3)]);
+      sayLine("win");
       setTimeout(() => maybeAd(true), 9000);
     } else if (e.kind === "flee") {
       toast("hit", `撤退，受到 ${e.dmg} 點傷害`);
       say("撤退也是一種戰術，下次再來。");
     } else if (e.kind === "dead") {
       hitFx();
-      say(`倒下了……不過留下了 <em>${e.shards}</em> 顆結晶，可以買永久強化。`);
+      sayLine("dead", `（留下 <em>${e.shards}</em> 顆結晶）`);
     } else if (e.kind === "won") {
       confetti(200);
-      say(`你征服了演算法地城！帶回 <em>${e.shards}</em> 顆結晶！`);
+      sayLine("won", `（帶回 <em>${e.shards}</em> 顆結晶）`);
     } else if (e.kind === "bounty") {
       confetti();
       toast("win", `賞金達成：${e.title}`, `額外經驗 +${e.xp}　結晶 +${e.shards}`);
-      say("賞金到手！廣告推薦的題目果然沒騙你吧。");
+      sayLine("bounty");
     } else if (e.kind === "login") {
       confetti(60);
       toast("win", `登入成功：${e.user}`, "現在可以試招、出招、同步官網進度了");
-      say(`歡迎，<em>${esc(e.user)}</em>！要不要先同步一下官網進度？`);
+      sayLine("login");
     } else if (e.kind === "bountyAccepted") {
       toast("info", "賞金任務已接下", "解題檔已在 VS Code 開啟，解完就能領雙倍經驗");
     }
@@ -324,7 +335,7 @@ function render() {
 function renderHud() {
   const p = S.player;
   applyLook();
-  $("#sayWho").textContent = profile().companion || "露緹";
+  $("#sayWho").textContent = compName();
   $("#hName").textContent = profile().name || "";
   $("#hLv").textContent = p.level;
   $("#hTitle").textContent = p.title;
@@ -348,7 +359,7 @@ function renderTabsDots() {
 function questCard(q, opts = {}) {
   const bounty = S.meta.bounties[q.slug];
   return `<div class="quest ${opts.cls || ""}">
-    <div class="q-top"><span class="q-id">#${esc(q.id)}</span>${diffChip(q.difficulty)}</div>
+    <div class="q-top"><span class="q-id">#${esc(q.id)}${q.review ? ` <span class="chip" style="color:var(--violet);border-color:#3c3155">複習</span>` : ""}</span>${diffChip(q.difficulty)}</div>
     <div class="q-title">${esc(q.title)}</div>
     ${q.reasons?.length ? `<ul class="q-why">${q.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
     <div class="q-meta">難度分 <b>${q.rating}</b>${(q.tagNames || []).slice(0, 3).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</div>
@@ -367,11 +378,11 @@ function renderHome() {
   const bounties = Object.entries(S.meta.bounties);
   const run = S.run;
   el.innerHTML = `
-    ${S.login ? "" : `<div class="notice">還沒登入 LeetCode，<b>試招／出招／同步</b>需要登入。到 <button class="btn ghost" data-go="settings" style="padding:2px 10px">設定 → 帳號</button> 貼上兩個 cookie 就好，不用密碼。</div>`}
+    ${S.login ? "" : `<div class="notice">還沒登入 LeetCode，<b>試招／出招／同步</b>需要登入。到 <button class="btn ghost" data-go="settings" style="padding:2px 10px">設定 → 帳號</button> 按「用瀏覽器登入」，在官網登入就好，不用把密碼給遊戲。</div>`}
     <div class="panel">
       <div class="eyebrow">今日委託 · Daily Quests</div>
-      <h2>${esc(profile().companion || "露緹")}替你挑的三題</h2>
-      <p class="muted" style="margin:0 0 12px">依你的實力分 ${S.player.rating} 和技能樹的弱點挑的，難度剛好在你「努力一下打得贏」的範圍。</p>
+      <h2>${esc(compName())}替你挑的三題</h2>
+      <p class="muted" style="margin:0 0 12px">推薦風格：${esc(persona().style || "")}。依你的實力分 ${S.player.rating} 挑選${S.dayStreak ? `　·　已連續刷題 <b style="color:var(--ember-hot)">${S.dayStreak}</b> 天` : ""}。</p>
       <div class="quests">${S.picks.map((q) => questCard(q)).join("") || `<div class="empty">題庫裡的題目都被你解完了！試試「擴充題庫」。</div>`}</div>
     </div>
     <div class="grid2">
@@ -838,7 +849,7 @@ function renderModal() {
   const box = $("#modal"), card = $("#modalCard");
   let html = "", key = "";
   if (!profile().onboarded) {
-    key = "ob" + obStep;
+    key = "ob" + obStep + ((S && S.persona) || "");
     html = onboardingHTML();
   } else if (run && run.status !== "active") {
     const r = run.result || {};
@@ -856,7 +867,8 @@ function renderModal() {
         <div class="choices">${pd.options.map((id) => relicCard(id, `data-act="pick" data-arg="${id}"`)).join("") || `<div class="empty">遺物都被你拿光了！</div>`}</div>
         <button class="btn ghost" data-act="skip">都不要</button>`;
     } else if (pd.kind === "camp") {
-      const heal = Math.floor(run.max_hp * 0.3) * (run.relics.includes("recursion_mirror") ? 2 : 1);
+      let heal = Math.floor(run.max_hp * 0.3) * (run.relics.includes("recursion_mirror") ? 2 : 1);
+      if (run.persona === "p7") heal = Math.floor(heal * 1.5);
       html = `<div class="eyebrow">Campfire</div><h2>篝火</h2><p class="muted" style="margin:0">火光很溫暖。要休息還是修練？</p>
         <div class="choices"><button class="btn" data-act="rest">休息：回復 ${heal} HP</button><button class="btn" data-act="train">修練：最大 HP +6</button></div>`;
     } else if (pd.kind === "shop") {
@@ -889,9 +901,25 @@ let obStep = 1;
 function avatarPicker(p) {
   const up = p.uploads && p.uploads.avatar;
   return `<div class="avatars">
-    ${AVATARS.map((a) => `<button class="av" data-avatar="${a.id}" aria-pressed="${p.avatar === a.id}">${avatarSVG(a.id)}<span>${esc(a.name)}</span></button>`).join("")}
+    ${AVATARS.map((a) => `<button class="av" data-avatar="${a.id}" aria-pressed="${p.avatar === a.id}">${avatarSVG(a.id)}<span>${esc(a.name)}</span><small>${esc((COMP[a.id] || {}).title || "")}</small></button>`).join("")}
     ${up ? `<button class="av" data-avatar="upload" aria-pressed="${p.avatar === "upload"}"><img src="/user-asset/avatar?v=${esc(up.split("v=")[1] || "1")}" alt=""><span>我的圖片</span></button>` : ""}
     <label class="av up" role="button" tabindex="0"><span>＋</span><span>上傳圖片</span><input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-upload="avatar" hidden></label>
+  </div>`;
+}
+
+function personaCard(withSelect = false) {
+  const c = persona();
+  const pid = (S && S.persona) || "p0";
+  return `<div class="persona">
+    <div class="persona-head"><span class="persona-av">${avatarSVG(pid)}</span>
+      <div><b>${esc(c.name || "")}</b><span class="persona-title">${esc(c.title || "")}</span></div></div>
+    <p class="persona-intro">${esc(c.intro || "")}</p>
+    <dl class="persona-dl">
+      <dt>推薦風格</dt><dd>${esc(c.style || "")}</dd>
+      <dt>特殊加成</dt><dd>${esc(c.perk || "")}</dd>
+    </dl>
+    ${withSelect ? `<label class="field" style="max-width:320px">個性（決定推薦風格與台詞）<select id="pfPersona">${Object.values(COMP).map((x) => `<option value="${x.id}" ${x.id === pid ? "selected" : ""}>${esc(x.name)}・${esc(x.title)}</option>`).join("")}</select></label>
+      <p class="muted" style="font-size:12px;margin:0">選內建頭像時，個性會跟著換成那位角色；上傳自己的圖片時，可以在這裡另外選個性。</p>` : ""}
   </div>`;
 }
 
@@ -946,7 +974,7 @@ async function startBrowserLogin() {
 function renderSettings() {
   const el = $("#tab-settings");
   const p = profile();
-  const sig = JSON.stringify([p, S.login, S.lang, S.vscodeInstalled, S.library.total]);
+  const sig = JSON.stringify([p, S.persona, S.login, S.lang, S.vscodeInstalled, S.library.total]);
   if (sig === settingsSig && el.childElementCount) return;
   settingsSig = sig;
   el.innerHTML = `
@@ -964,11 +992,24 @@ function renderSettings() {
       <h2>頭像與看板娘</h2>
       <p class="muted" style="margin:4px 0 12px">選一位陪你刷題的看板娘，或上傳自己的圖片（PNG、JPG、GIF、WebP，6 MB 以內）。<br><span style="font-size:12px">看板娘的圖像與名字由 AI 生成，如有雷同，純屬巧合。</span></p>
       ${avatarPicker(p)}
+      ${personaCard(true)}
       <div class="fields" style="margin-top:14px">
         <label class="field">你的暱稱<input id="pfName" maxlength="24" value="${esc(p.name)}" placeholder="獵題人"></label>
         <label class="field">看板娘的名字<input id="pfComp" maxlength="24" value="${esc(p.companion)}" placeholder="露緹"></label>
       </div>
       <div class="row" style="margin-top:10px"><button class="btn primary" data-savename>儲存名字</button></div>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Companions · 看板娘圖鑑</div>
+      <h2>認識大家</h2>
+      <p class="muted" style="margin:4px 0 12px">每位看板娘都有自己的個性、推薦題目的方式和一個小加成。想換個刷題節奏，就換一位夥伴吧。</p>
+      <div class="dex">${Object.values(COMP).map((c) => `<div class="dex-card ${c.id === S.persona ? "on" : ""}">
+          <div class="persona-head"><span class="persona-av">${avatarSVG(c.id)}</span><div><b>${esc(c.name)}</b><span class="persona-title">${esc(c.title)}</span></div></div>
+          <p class="persona-intro">${esc(c.intro)}</p>
+          <dl class="persona-dl"><dt>推薦風格</dt><dd>${esc(c.style)}</dd><dt>特殊加成</dt><dd>${esc(c.perk)}</dd></dl>
+          <p class="dex-quote">「${esc(((c.lines || {}).greet || [""])[0].replace("{name}", (S.profile && S.profile.name) || "獵題人"))}」</p>
+          ${c.id === S.persona ? `<span class="chip" style="justify-self:start;color:var(--ember-hot);border-color:#6b4e22">目前的夥伴</span>` : `<button class="btn" data-avatar="${c.id}" style="justify-self:start">選她當夥伴</button>`}
+        </div>`).join("")}</div>
     </div>
     <div class="panel">
       <div class="eyebrow">Backdrop</div>
@@ -1004,8 +1045,9 @@ function onboardingHTML() {
   if (obStep === 1) {
     return `<div class="eyebrow">Welcome · 1 / 2</div>
       <h2>歡迎來到 LeetCode 演算法地城</h2>
-      <p class="muted" style="margin:0">在這裡刷題會長出技能樹、提升段位、打怪遠征。先選一位陪你冒險的看板娘吧。</p>
+      <p class="muted" style="margin:0">在這裡刷題會長出技能樹、提升段位、打怪遠征。先選一位陪你冒險的看板娘吧：每位的個性和推薦題目的方式都不一樣。</p>
       ${avatarPicker(p)}
+      ${personaCard(false)}
       <div class="fields">
         <label class="field">你的暱稱<input id="obName" maxlength="24" value="${esc(p.name)}" placeholder="獵題人"></label>
         <label class="field">解題語言<select id="obLang">${S.langs.map((l) => `<option value="${l.id}" ${l.id === S.lang ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></label>
@@ -1054,7 +1096,7 @@ async function runTest(slug) {
     const r = await api("/api/test", { slug, input: tc });
     lastResult[slug] = { kind: "test", result: r.result };
     const ok = r.result.status_msg === "Accepted" && JSON.stringify(r.result.code_answer) === JSON.stringify(r.result.expected_code_answer);
-    say(ok ? "範例全對！可以<em>出招</em>了。" : "範例沒過，看一下輸出差在哪。");
+    sayLine(ok ? "testOk" : "testFail");
     toast(ok ? "win" : "hit", ok ? "範例測資全對" : `試招：${r.result.status_msg || "沒過"}`);
     render();
   } catch (e) {
@@ -1071,8 +1113,8 @@ async function runSubmit(slug) {
     const inRun = (st.events || []).some((e) => e.kind === "win" || e.kind === "hit");
     applyState(st);
     if (!inRun) {
-      if (st.accepted) { confetti(); toast("win", "通過！", "經驗已入帳，技能樹更新了"); say("通過了！要不要再接一題？"); setTimeout(() => maybeAd(true), 8000); }
-      else { toast("hit", st.result.status_msg || "沒通過", "看一下下方的錯誤訊息"); say("差一點！看看是哪筆測資出錯。"); }
+      if (st.accepted) { confetti(); toast("win", "通過！", "經驗已入帳，技能樹更新了"); sayLine("win"); setTimeout(() => maybeAd(true), 8000); }
+      else { toast("hit", st.result.status_msg || "沒通過", "看一下下方的錯誤訊息"); sayLine("hit"); }
     }
   } catch (e) {
     toast("info", "出招失敗", e.message);
@@ -1092,7 +1134,7 @@ document.addEventListener("click", async (ev) => {
   if (d.bounty) { await act("/api/bounty", { slug: d.bounty }); setFocus(d.bounty); return render(); }
   if (d.choose) {
     const st = await act("/api/run/choose", { slug: d.choose });
-    if (st) { setFocus(d.choose); toast("info", "開戰！", "解題檔已在 VS Code 開啟"); say("上吧！寫完按<em>試招</em>先確認範例。"); setTab("problem"); }
+    if (st) { setFocus(d.choose); toast("info", "開戰！", "解題檔已在 VS Code 開啟"); sayLine("choose"); setTab("problem"); }
     return;
   }
   if (d.enter) {
@@ -1122,9 +1164,10 @@ document.addEventListener("click", async (ev) => {
   if (d.avatar) {
     const body = { avatar: d.avatar };
     const preset = AVATARS.find((a) => a.id === d.avatar);
+    if (preset) body.persona = preset.id; // 選內建角色＝換成她的個性與推薦風格
     // 看板娘名字還是預設角色名時，跟著換成新角色的名字
     if (preset && (!profile().companion || AVATARS.some((a) => a.name === profile().companion))) body.companion = preset.name;
-    const st = await act("/api/profile", body); if (st) { settingsSig = ""; modalKey = ""; render(); say(d.avatar === "upload" ? "新頭像很好看！" : `你好，我是<em>${esc((AVATARS.find((a) => a.id === d.avatar) || {}).name || "")}</em>，請多指教！`); } return; }
+    const st = await act("/api/profile", body); if (st) { settingsSig = ""; modalKey = ""; render(); say(d.avatar === "upload" ? "新頭像很好看！" : line("greet")); } return; }
   if (d.bgpick) { const st = await act("/api/profile", { bg: d.bgpick }); if (st) { settingsSig = ""; render(); } return; }
   if (d.savename !== undefined) {
     const st = await act("/api/profile", { name: $("#pfName").value, companion: $("#pfComp").value });
@@ -1143,11 +1186,16 @@ document.addEventListener("click", async (ev) => {
     if (st) { obStep = 2; modalKey = ""; render(); }
     return;
   }
-  if (d.ob === "done") { obStep = 1; await act("/api/profile", { onboarded: true }); say(`歡迎，<em>${esc(profile().name || "獵題人")}</em>！先去酒館看看今天的委託吧。`); setTab("home"); return; }
+  if (d.ob === "done") { obStep = 1; await act("/api/profile", { onboarded: true }); sayLine("greet"); setTab("home"); return; }
 });
 document.addEventListener("change", async (ev) => {
   const t = ev.target;
   if (t.matches("input[data-upload]")) return uploadFile(t);
+  if (t.id === "pfPersona") {
+    const st = await act("/api/profile", { persona: t.value });
+    if (st) { settingsSig = ""; render(); sayLine("greet"); toast("info", `個性換成${persona().name}`, persona().style); }
+    return;
+  }
   if (t.id === "pfLang") { const st = await act("/api/profile", { lang: t.value }); if (st) toast("info", "解題語言已更新", t.selectedOptions[0].textContent); return; }
   if (t.id === "pfDim") { await act("/api/profile", { dim: Number(t.value) }); return; }
 });
@@ -1170,7 +1218,7 @@ async function maybeAd(force = false) {
   if (!r.ad) return;
   lastAd = Date.now();
   const a = r.ad;
-  const kick = ["限時賞金！", `${profile().companion || "露緹"}強力推薦`, "你的下一個對手", "今日特價：經驗 ×2", "剛好打得贏！"][Math.floor(Math.random() * 5)];
+  const kick = Math.random() < 0.6 ? `${esc(compName())}：${line("recommend")}` : ["限時賞金！", "你的下一個對手", "今日特價：經驗 ×2"][Math.floor(Math.random() * 3)];
   const ad = $("#ad");
   ad.innerHTML = `<div class="ad-in">
     <span class="ad-tag">AD</span><button class="ad-x" data-adx disabled aria-label="關閉廣告">3</button>
@@ -1201,6 +1249,10 @@ async function poll() {
 
 (async function boot() {
   try {
+    const cj = await fetch("companions.json").then((r) => r.json());
+    COMP = Object.fromEntries(cj.companions.map((c) => [c.id, c]));
+  } catch (e) { /* 角色資料讀不到就用預設台詞 */ }
+  try {
     applyState(await api("/api/state"));
     lastPoll = Date.now();
   } catch (e) {
@@ -1208,7 +1260,7 @@ async function poll() {
     return;
   }
   setTab(tab);
-  say(IDLE[Math.floor(Math.random() * IDLE.length)], false);
+  say(line(Math.random() < 0.5 ? "greet" : "idle"), false);
   setInterval(poll, 2500);
   addEventListener("focus", () => { lastPoll = 0; poll(); });
   setTimeout(() => maybeAd(true), 25000);
