@@ -174,6 +174,43 @@ def make_session(require_login: bool = False) -> requests.Session:
     return s
 
 
+def check_response(resp: requests.Response, action: str):
+    """LeetCode 回應不是 2xx 時，判斷真正原因、存下原始回應，再給看得懂的訊息。"""
+    if resp.ok:
+        return
+    body = resp.text or ""
+    low = body.lower()
+    log = DATA_DIR / "last_http_error.txt"
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        keep = ("server", "cf-ray", "cf-mitigated", "content-type", "retry-after")
+        log.write_text(
+            f"時間：{datetime.now():%Y-%m-%d %H:%M:%S}\n動作：{action}\n網址：{resp.request.method} {resp.url}\n"
+            f"狀態：{resp.status_code}\n"
+            + "".join(f"{k}: {resp.headers.get(k)}\n" for k in keep if resp.headers.get(k))
+            + "\n" + body[:4000],
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+    tail = f"\n   技術細節已存到 {log}"
+    if resp.headers.get("cf-mitigated") == "challenge" or "just a moment" in low or "cf_chl" in low:
+        sys.exit(f"❌ LeetCode 的防火牆要求做真人驗證，擋下了這次{action}（不是登入問題）。\n"
+                 "   通常是短時間內送太多次。等幾分鐘再試，或先到 leetcode.com 網站提交，\n"
+                 "   再回遊戲按「同步官網進度」領取戰果。" + tail)
+    if "sorry, you have been blocked" in low or "attention required" in low or "cf-error-details" in low:
+        sys.exit(f"❌ LeetCode 的防火牆擋下了這次{action}（不是登入問題），可能是程式碼內容觸發了它的規則。\n"
+                 "   可以先到 leetcode.com 網站提交同一份程式碼，再回遊戲按「同步官網進度」領取戰果。" + tail)
+    if resp.status_code == 429:
+        sys.exit(f"❌ 送得太頻繁了（429），LeetCode 要你等一下。過一兩分鐘再{action}。" + tail)
+    if resp.status_code in (401, 403) and ("csrf" in low or "login" in low or "authentication" in low or not body.strip()):
+        sys.exit(f"❌ 被拒絕（{resp.status_code}）：登入資訊失效了。到「設定 → 帳號」重新登入一次。" + tail)
+    if resp.status_code == 403:
+        sys.exit(f"❌ 被拒絕（403），原因不明，看起來不是登入過期。\n"
+                 f"   LeetCode 的回應開頭：{' '.join(body.split())[:160]}" + tail)
+    sys.exit(f"❌ {action}失敗：LeetCode 回應 {resp.status_code}。" + tail)
+
+
 def graphql(session: requests.Session, query: str, variables: dict) -> dict:
     resp = session.post(
         GRAPHQL,
@@ -509,7 +546,7 @@ def poll_check(session: requests.Session, check_id: str, slug: str) -> dict:
     headers = {"Referer": f"{BASE}/problems/{slug}/"}
     for _ in range(60):  # 最多等約 60 秒
         resp = session.get(url, headers=headers, timeout=30)
-        resp.raise_for_status()
+        check_response(resp, "取得判題結果")
         result = resp.json()
         if result.get("state") == "SUCCESS":
             return result
@@ -533,9 +570,7 @@ def run_test(p: dict, data_input=None) -> dict:
         headers={"Referer": f"{BASE}/problems/{p['slug']}/"},
         timeout=30,
     )
-    if resp.status_code == 403:
-        sys.exit("❌ 被拒絕（403）。多半是登入資訊過期了，請更新 config.json。")
-    resp.raise_for_status()
+    check_response(resp, "試跑")
     interpret_id = resp.json().get("interpret_id")
     if not interpret_id:
         sys.exit(f"❌ 試跑失敗：{resp.text}")
@@ -603,9 +638,7 @@ def run_submit(p: dict):
         headers={"Referer": f"{BASE}/problems/{p['slug']}/"},
         timeout=30,
     )
-    if resp.status_code == 403:
-        sys.exit("❌ 被拒絕（403）。多半是登入資訊過期了，請更新 config.json。")
-    resp.raise_for_status()
+    check_response(resp, "提交")
     submission_id = resp.json().get("submission_id")
     if not submission_id:
         sys.exit(f"❌ 提交失敗：{resp.text}")
