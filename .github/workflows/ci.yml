@@ -1,0 +1,31 @@
+# 每次 push 或開 PR 都自動跑測試（Windows 和 Linux 各一份）。
+# 放到 .github/workflows/ci.yml 才會生效：
+#   copy tools\ci.yml .github\workflows\ci.yml
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安裝套件
+        run: python -m pip install -r requirements.txt
+      - name: 看看有沒有 C++ 編譯器（沒有的話 C++ 測試會自動略過）
+        run: g++ --version
+        continue-on-error: true
+      - name: 跑測試
+        run: python -m unittest discover -s tests -v
+        env:
+          PYTHONIOENCODING: utf-8
