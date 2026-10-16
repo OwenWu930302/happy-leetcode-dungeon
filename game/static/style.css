@@ -334,3 +334,86 @@ body[data-bg]{background-attachment:fixed}
 .dex-card{display:grid;gap:8px;align-content:start;padding:14px;border-radius:12px;border:1px solid var(--line);background:#10131c}
 .dex-card.on{border-color:var(--ember-hot);box-shadow:0 0 0 1px var(--ember-hot),0 0 18px rgba(233,171,71,.2)}
 .dex-quote{margin:0;font-family:var(--f-display);font-size:13.5px;color:#e2cfa6}
+
+/* ---------- 出招進度 ---------- */
+.psteps{display:flex;gap:6px;list-style:none;margin:0;padding:0;font-family:var(--f-body);font-size:12.5px}
+.psteps li{padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--ash)}
+.psteps li.done{color:var(--heal);border-color:#2f5a45}
+.psteps li.done::before{content:"✔ "}
+.psteps li.now{color:var(--ember-hot);border-color:var(--ember);background:#2a2214}
+.psteps-note{font-family:var(--f-body);font-size:12.5px;color:var(--parch-dim);max-width:340px;text-align:center;margin-top:6px}
+.psteps-note b{color:var(--ember-hot)}
+
+/* ---------- 沒送出去的說明卡 ---------- */
+.errcard{display:grid;gap:8px;padding:14px 16px;border-radius:var(--r);background:#1f1716;border:1px solid #5a2f2a}
+.errcard>b{color:#ffb4a8;font-size:15px}
+.errcard p{margin:0;color:var(--parch)}
+.errcard ul{margin:0;padding-left:20px;color:var(--parch-dim);font-size:13.5px}
+.errcard details summary{cursor:pointer;color:var(--ash);font-size:12.5px}
+.errcard code{display:block;white-space:pre-wrap;font-family:var(--f-mono);font-size:12px;color:var(--ash);margin-top:4px;overflow-wrap:anywhere}
+
+/* ---------- 本地試跑的每筆測資 ---------- */
+.console .lr-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;margin-bottom:6px}
+.lr-case{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:6px 0;border-top:1px dashed #232a3a;white-space:normal}
+.lr-case.is-bad{background:linear-gradient(90deg,#2a161455,transparent)}
+.lr-mark{display:flex;gap:6px;align-items:baseline;justify-content:flex-end;padding-right:6px}
+.lr-body>div{white-space:pre-wrap}
+.lr-body pre{margin:2px 0 0;padding:4px 8px;background:#0d1018;border-radius:6px;font:inherit;white-space:pre-wrap;max-height:120px;overflow:auto}
+.console:has(.lr-case){max-height:420px}
+
+/* ---------- 環境檢查 ---------- */
+.envlist{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.envlist li{display:grid;grid-template-columns:24px 1fr;gap:8px;padding:8px 10px;border-radius:10px;background:var(--stone-2);border:1px solid var(--line)}
+.env-ic{font-weight:700;text-align:center}
+.envlist li.ok .env-ic{color:var(--heal)} .envlist li.bad .env-ic{color:var(--blood)} .envlist li.warn .env-ic{color:var(--med)}
+.envlist li.bad{border-color:#5a2f2a}
+.env-fix{font-size:12.5px;color:var(--parch-dim);margin-top:3px}
+
+/* ---------- 備份清單 ---------- */
+.bk{width:100%;border-collapse:collapse;font-size:13px}
+.bk th{text-align:left;color:var(--ash);font-weight:500;padding:4px 8px;border-bottom:1px solid var(--line)}
+.bk td{padding:5px 8px;border-bottom:1px dashed #232a3a}
+.tablewrap{overflow-x:auto}
+
+/* ---------- 日誌分頁 ---------- */
+.tabs button .count{display:inline-block;min-width:18px;padding:0 5px;margin-left:5px;border-radius:99px;background:#5a2f2a;color:#ffd0c8;font:600 11px/17px var(--f-body);font-style:normal;letter-spacing:0;text-align:center;vertical-align:1px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:99px;overflow:hidden}
+.seg button{background:none;border:0;padding:4px 14px;color:var(--ash);font-size:13px}
+.seg button[aria-pressed="true"]{background:#2a2214;color:var(--ember-hot)}
+.wk{display:grid;gap:10px;margin-top:10px}
+.wk-range{color:var(--ash);font-size:12.5px}
+.wk-kv div{display:grid;gap:2px}
+.wk-kv span{font-size:12px;color:var(--ash)}
+.wk-kv i{font-style:normal;font-size:11.5px;color:var(--parch-dim)}
+.wk-kv small{font-size:12px;margin-left:4px}
+.dlt-up{color:var(--heal)} .dlt-down{color:var(--blood)}
+.wk-line{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.wk-line>.muted{font-size:12.5px;margin-right:4px}
+.chip.lit{color:var(--ember-hot);border-color:#6b4e22}
+.chip.dim-chip{border-style:dashed}
+.wk-tips{margin:0;padding-left:20px;display:grid;gap:4px;color:var(--parch);font-size:13.5px}
+.wk-solved{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.mklist{display:grid;gap:8px;margin-top:12px}
+.mk{border:1px solid var(--line);border-radius:10px;background:#10131c}
+.mk>summary{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:9px 12px;cursor:pointer;list-style:none}
+.mk>summary::-webkit-details-marker{display:none}
+.mk.done{opacity:.7}
+.mk-st{font-size:12px;font-weight:600;padding:1px 8px;border-radius:6px}
+.mk-st.bad{background:#3a1d1a;color:#ffb4a8} .mk-st.ok{background:#173326;color:#9ee0bd}
+.mk-body{display:grid;gap:8px;padding:0 12px 12px;font-size:13px}
+.mk-body pre{margin:3px 0 0;padding:6px 10px;background:#090b10;border:1px solid var(--line);border-radius:8px;font:12.5px/1.55 var(--f-mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+.mk-body pre.bad{color:#ffb4a8}
+.mk-body .dim{color:var(--ash);font-size:12px}
+.mk-io{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.mk-code{max-height:320px}
+
+/* ---------- 每日挑戰 ---------- */
+.daily{border-color:#2e4a52}
+.daily-best{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:0 0 12px;padding:8px 12px;border-radius:10px;background:#0f1a1d;border:1px solid #2e4a52}
+.daily-best code{font-family:var(--f-mono);color:var(--rune);font-size:14px;letter-spacing:.02em}
+
+/* ---------- 疊在畫面上的視窗（週報、分享卡） ---------- */
+.overlay{position:fixed;inset:0;z-index:45;background:rgba(6,7,11,.72);display:grid;place-items:center;padding:16px;backdrop-filter:blur(3px)}
+.overlay .modal-card{width:min(680px,100%)}
+.share-img{width:100%;height:auto;border-radius:12px;border:1px solid var(--line)}
+@media (max-width:560px){.seg button{padding:4px 10px}.mk>summary{padding:8px 10px}}

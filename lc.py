@@ -139,6 +139,26 @@ def save_json(path: Path, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+class LcError(SystemExit):
+    """給玩家看的錯誤。kind 讓遊戲畫面決定要顯示哪個按鈕：
+    network 網路、login 登入、verify 真人驗證、rate 太頻繁、blocked 防火牆、timeout 判題逾時、code 程式碼本身、other 其他。
+    繼承 SystemExit，所以指令列版本照舊印出訊息後結束。"""
+
+    def __init__(self, msg: str, kind: str = "other"):
+        super().__init__(msg)
+        self.kind = kind
+
+
+# 進度：讓遊戲畫面能顯示「送出中 → 判題中 → 完成」
+PROGRESS = {"phase": None, "action": None, "since": 0.0, "polls": 0}
+
+
+def set_progress(phase, action=None):
+    PROGRESS.update(phase=phase, since=time.time(), polls=0)
+    if action:
+        PROGRESS["action"] = action
+
+
 def load_config():
     """讀取登入設定。沒有檔案時回傳空 dict（fetch/list 不需要登入）。"""
     return load_json(CONFIG_PATH, {})
@@ -166,11 +186,10 @@ def make_session(require_login: bool = False) -> requests.Session:
         s.cookies.set("csrftoken", csrftoken, domain="leetcode.com")
         s.headers["x-csrftoken"] = csrftoken
     elif require_login:
-        sys.exit(
-            "❌ 這個動作需要登入資訊。\n"
-            "   請建立 config.json，填入 LeetCode 的 csrftoken 與 LEETCODE_SESSION。\n"
-            "   詳細步驟請看 README.md。"
-        )
+        raise LcError(
+            "❌ 這個動作需要先登入 LeetCode。\n"
+            "   遊戲裡：到「設定 → 帳號」按「用瀏覽器登入」。\n"
+            "   指令列：python lc.py game 開遊戲登入，或照 README 填 config.json。", "login")
     return s
 
 
@@ -195,20 +214,21 @@ def check_response(resp: requests.Response, action: str):
         pass
     tail = f"\n   技術細節已存到 {log}"
     if resp.headers.get("cf-mitigated") == "challenge" or "just a moment" in low or "cf_chl" in low:
-        sys.exit(f"❌ LeetCode 的防火牆要求做真人驗證，擋下了這次{action}（不是登入問題）。\n"
-                 "   通常是短時間內送太多次。等幾分鐘再試，或先到 leetcode.com 網站提交，\n"
-                 "   再回遊戲按「同步官網進度」領取戰果。" + tail)
+        raise LcError(f"❌ LeetCode 要求確認你是真人，這次{action}還沒送出（不是登入問題）。\n"
+                      "   在遊戲裡按「重送」，跳出的視窗點一下驗證就會繼續；\n"
+                      "   如果設定裡的提交方式是「程式直接送出」，改成「瀏覽器代送」會順很多。" + tail, "verify")
     if "sorry, you have been blocked" in low or "attention required" in low or "cf-error-details" in low:
-        sys.exit(f"❌ LeetCode 的防火牆擋下了這次{action}（不是登入問題），可能是程式碼內容觸發了它的規則。\n"
-                 "   可以先到 leetcode.com 網站提交同一份程式碼，再回遊戲按「同步官網進度」領取戰果。" + tail)
+        raise LcError(f"❌ LeetCode 的防火牆擋下了這次{action}（不是登入問題），可能是程式碼內容觸發了它的規則。\n"
+                      "   等幾分鐘再按「重送」；一直被擋的話，試著改掉程式碼裡很長的註解或特殊字元。" + tail, "blocked")
     if resp.status_code == 429:
-        sys.exit(f"❌ 送得太頻繁了（429），LeetCode 要你等一下。過一兩分鐘再{action}。" + tail)
+        raise LcError(f"❌ 送得太頻繁了（429），LeetCode 要你等一下。過一兩分鐘再{action}。" + tail, "rate")
     if resp.status_code in (401, 403) and ("csrf" in low or "login" in low or "authentication" in low or not body.strip()):
-        sys.exit(f"❌ 被拒絕（{resp.status_code}）：登入資訊失效了。到「設定 → 帳號」重新登入一次。" + tail)
+        raise LcError(f"❌ 被拒絕（{resp.status_code}）：登入資訊失效了。到「設定 → 帳號」重新登入一次。" + tail, "login")
     if resp.status_code == 403:
-        sys.exit(f"❌ 被拒絕（403），原因不明，看起來不是登入過期。\n"
-                 f"   LeetCode 的回應開頭：{' '.join(body.split())[:160]}" + tail)
-    sys.exit(f"❌ {action}失敗：LeetCode 回應 {resp.status_code}。" + tail)
+        raise LcError(f"❌ 被拒絕（403），原因不明，看起來不是登入過期。\n"
+                      f"   LeetCode 的回應開頭：{' '.join(body.split())[:160]}" + tail, "other")
+    raise LcError(f"❌ {action}失敗：LeetCode 回應 {resp.status_code}。" + tail,
+                  "network" if resp.status_code >= 500 else "other")
 
 
 # ---------------------------------------------------------------------------
@@ -612,47 +632,78 @@ def read_solution(p: dict):
     ext_lang = next((k for k, v in LANGS.items() if path.suffix == v[0]), "python3")
     lang = meta.get("lang", ext_lang)
     if not code.strip():
-        sys.exit("❌ 你的程式碼是空的，先寫點東西再提交吧 :)")
+        raise LcError("❌ 你的程式碼是空的，先寫點東西再提交吧 :)", "code")
     # 防呆：內容跟官方空白範本一模一樣 → 八成是在編輯器裡寫了但還沒存檔
     cached = load_json(DATA_DIR / "details" / f"{p['slug']}.json", None)
     if cached:
         squash = lambda t: re.sub(r"\s+", "", t or "")
         if squash(code) == squash(get_snippet(cached, lang)):
-            sys.exit(f"❌ {path.name} 還是空白範本，看起來還沒存檔。\n"
-                     "   在 VS Code 按 Ctrl+S 存檔後再試一次（分頁標題旁邊有白點 ● 就是還沒存）。")
+            raise LcError(f"❌ {path.name} 還是空白範本，看起來還沒存檔。\n"
+                          "   在 VS Code 按 Ctrl+S 存檔後再試一次（分頁標題旁邊有白點 ● 就是還沒存）。", "code")
     return qid, lang, code, path
+
+
+def solution_offset(path: Path) -> int:
+    """解題檔裡「你的程式碼」前面有幾行（本地試跑用來對齊錯誤訊息的行號）。"""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    cut = next((i for i, l in enumerate(lines) if MARK in l), None)
+    return cut + 1 if cut is not None else 0
+
+
+def test_mode() -> str:
+    """試跑方式：auto＝先在自己電腦跑，跑不了才用 LeetCode；local＝只在本地；online＝只用 LeetCode。"""
+    m = load_config().get("testMode", "auto")
+    return m if m in ("auto", "local", "online") else "auto"
 
 
 def poll_check(session: requests.Session, check_id: str, slug: str) -> dict:
     """輪詢判題結果，直到完成。"""
     waits = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0] + [4.0] * 20  # 越等越久，總共約 90 秒、不到 30 次請求
+    set_progress("judge")
     for wait in waits:
         time.sleep(wait)
+        PROGRESS["polls"] += 1
         result = lc_request(session, "GET", f"/submissions/detail/{check_id}/check/",
                             referer=f"/problems/{slug}/", action="取得判題結果")
         if result.get("state") == "SUCCESS":
             return result
         print("   …判題中", end="\r")
-    sys.exit("❌ 等太久了，判題逾時。請稍後再試。")
+    raise LcError("❌ 等了 90 秒還沒有判題結果，LeetCode 可能很忙。\n"
+                  "   程式碼可能已經送到了：先按「同步官網進度」看看，沒有紀錄再重送。", "timeout")
 
 
 # ---------------------------------------------------------------------------
 # 5. test — 用範例測資線上試跑（interpret，不算正式提交）
 # ---------------------------------------------------------------------------
-def run_test(p: dict, data_input=None) -> dict:
-    """線上試跑，回傳 LeetCode 的判題結果（dict）。"""
+def run_test(p: dict, data_input=None, where: str = None) -> dict:
+    """試跑。預設先在自己電腦上跑（快、不用登入），這題跑不了才改用 LeetCode 線上試跑。"""
     q = fetch_question_detail(p["slug"])
-    qid, lang, code, _ = read_solution(p)
-    session = make_session(require_login=True)
+    qid, lang, code, path = read_solution(p)
     data_input = data_input if data_input else q["exampleTestcases"]
+    where = where or test_mode()
+    fallback = None
+    if where != "online":
+        from game import localrun
+        try:
+            return localrun.run_local(q, lang, code, solution_offset(path), path.name, data_input,
+                                      DATA_DIR / "localrun")
+        except localrun.Unsupported as e:
+            if where == "local":
+                raise LcError(f"❌ 這題沒辦法在本地試跑：{e}", "code")
+            fallback = str(e)
+    set_progress("send", "試跑")
+    session = make_session(require_login=True)
     data = lc_request(session, "POST", f"/problems/{p['slug']}/interpret_solution/",
                       {"lang": lang, "question_id": qid, "typed_code": code, "data_input": data_input},
                       referer=f"/problems/{p['slug']}/", action="試跑")
     interpret_id = data.get("interpret_id")
     if not interpret_id:
-        sys.exit(f"❌ 試跑失敗：{json.dumps(data, ensure_ascii=False)[:300]}")
+        raise LcError(f"❌ 試跑失敗：{json.dumps(data, ensure_ascii=False)[:300]}")
     result = poll_check(session, interpret_id, p["slug"])
+    set_progress("done")
     result["_input"] = data_input
+    if fallback:
+        result["_fallback"] = fallback
     return result
 
 
@@ -660,11 +711,37 @@ def cmd_test(args):
     p = find_problem(args.problem)
     q = fetch_question_detail(p["slug"])
     data_input = args.input if args.input else q["exampleTestcases"]
-    print(f"🧪 用範例測資試跑第 {p['id']} 題（{p['title']}）…")
-    print(f"   測資：\n{data_input}\n")
-    result = run_test(p, data_input)
+    where = "online" if args.online else "local" if args.local else None
+    print(f"🧪 試跑第 {p['id']} 題（{p['title']}）…")
+    result = run_test(p, data_input, where)
     print(" " * 30, end="\r")
+    if result.get("local"):
+        _print_local_result(result)
+        return
+    if result.get("_fallback"):
+        print(f"   （這題沒辦法本地跑：{result['_fallback']}，改用 LeetCode 線上試跑）")
+    print(f"   測資：\n{data_input}\n")
     _print_run_result(result, is_test=True)
+
+
+def _print_local_result(r: dict):
+    names = {"Accepted": "✅ 範例全對", "Wrong Answer": "❌ 答案不對", "Runtime Error": "💥 執行時錯誤",
+             "Compile Error": "⛔ 編譯/語法錯誤", "Time Limit Exceeded": "⏱️ 超過時間", "Finished": "📋 跑完了（自訂測資沒有標準答案）"}
+    print(f"📊 本地試跑（{r.get('engine')}，{r.get('elapsed_ms')} ms）：{names.get(r['status_msg'], r['status_msg'])}")
+    if r.get("compile_error"):
+        print(r["compile_error"])
+        return
+    for k, c in enumerate(r["cases"], 1):
+        mark = {True: "✅", False: "❌", None: "・"}[c.get("ok")]
+        print(f"\n{mark} 第 {k} 筆  輸入：{' | '.join(c['input'])}")
+        if c.get("stdout"):
+            print("   print 輸出：" + c["stdout"].rstrip().replace("\n", "\n               "))
+        if c.get("error"):
+            print("   錯誤：" + c["error"].replace("\n", "\n         "))
+            continue
+        print(f"   你的輸出：{c.get('output')}" + (f"   （{c['ms']} ms）" if c.get("ms") is not None else ""))
+        if c.get("expected") is not None:
+            print(f"   正確答案：{c['expected']}")
 
 
 def _print_run_result(result: dict, is_test: bool):
@@ -709,16 +786,18 @@ def run_submit(p: dict):
     """正式提交並寫進 records.json。回傳 (判題結果, 是否通過)。"""
     qid, lang, code, _ = read_solution(p)
     session = make_session(require_login=True)
+    set_progress("send", "提交")
     data = lc_request(session, "POST", f"/problems/{p['slug']}/submit/",
                       {"lang": lang, "question_id": qid, "typed_code": code},
                       referer=f"/problems/{p['slug']}/", action="提交")
     submission_id = data.get("submission_id")
     if not submission_id:
-        sys.exit(f"❌ 提交失敗：{json.dumps(data, ensure_ascii=False)[:300]}")
+        raise LcError(f"❌ 提交失敗：{json.dumps(data, ensure_ascii=False)[:300]}")
 
     result = poll_check(session, str(submission_id), p["slug"])
+    set_progress("done")
     accepted = result.get("status_msg") == "Accepted"
-    record_submission(p, lang, submission_id, result, accepted)
+    record_submission(p, lang, submission_id, result, accepted, code)
     return result, accepted
 
 
@@ -734,7 +813,7 @@ def cmd_submit(args):
         print("💪 還沒過沒關係，紀錄已存。看一下錯在哪，再改改！")
 
 
-def record_submission(p, lang, submission_id, result, accepted):
+def record_submission(p, lang, submission_id, result, accepted, code=""):
     records = load_json(RECORDS_PATH, {})
     rec = records.get(p["slug"], {
         "id": p["id"],
@@ -760,6 +839,14 @@ def record_submission(p, lang, submission_id, result, accepted):
         rec.setdefault("solved_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     records[p["slug"]] = rec
     save_json(RECORDS_PATH, records)
+    try:  # 錯題本：沒過就記下來，過了就把這題的舊錯題標成已解決（壞掉也不能影響提交紀錄）
+        from game import mistakes
+        if accepted:
+            mistakes.resolve(DATA_DIR, p["slug"])
+        else:
+            mistakes.add(DATA_DIR, p, lang, result, code)
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️  錯題本沒有記到：{e}")
 
 
 # ---------------------------------------------------------------------------
@@ -961,6 +1048,8 @@ pdf/
 assets/
 browser-profile/
 .vscode/
+data/localrun/
+backups/
 """
 
 
@@ -1391,9 +1480,11 @@ def build_parser():
     pn.add_argument("--force", action="store_true", help="覆蓋已存在的檔案")
     pn.add_argument("--lang", choices=list(LANGS), help="解題語言（預設用 config.json 的 lang）")
 
-    pt = sub.add_parser("test", help="用範例測資線上試跑（不算正式提交）")
+    pt = sub.add_parser("test", help="用範例測資試跑（預設在自己電腦跑，跑不了才用 LeetCode）")
     pt.add_argument("problem", help="題號或 slug")
     pt.add_argument("--input", help="自訂測資（預設用官方範例）")
+    pt.add_argument("--local", action="store_true", help="只在自己電腦跑")
+    pt.add_argument("--online", action="store_true", help="只用 LeetCode 線上試跑")
 
     psub = sub.add_parser("submit", help="正式提交到 LeetCode 判題")
     psub.add_argument("problem", help="題號或 slug")

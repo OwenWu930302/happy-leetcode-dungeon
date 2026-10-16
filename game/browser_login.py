@@ -419,6 +419,15 @@ FETCH_JS = r"""
 """
 
 
+class NeedsUser(SystemExit):
+    """LeetCode 要求確認是真人，玩家還沒在跳出的視窗點驗證。"""
+    kind = "verify"
+
+    def __init__(self):
+        super().__init__("❌ LeetCode 要求確認你是真人，這次還沒送出。\n"
+                         "   在跳出的視窗點一下驗證，再按「重送」就好（程式碼還在你的檔案裡）。")
+
+
 class BrowserRelay:
     """在專用瀏覽器的 leetcode.com 分頁裡執行 fetch。
 
@@ -530,7 +539,7 @@ class BrowserRelay:
             url = self.base + (referer or "/problemset/")
             self._connect(url)
             if not self._wait_ready(wait):
-                raise SystemExit("❌ LeetCode 要求真人驗證，但還沒完成。請在跳出的 LeetCode 視窗裡點一下驗證，再出招一次。")
+                raise NeedsUser()
             expr = FETCH_JS % {
                 "method": json.dumps(method), "referer": json.dumps(url), "path": json.dumps(path),
                 "body": json.dumps(json.dumps(payload)) if payload is not None else "null",
@@ -541,6 +550,6 @@ class BrowserRelay:
                 self.page.call("Page.navigate", {"url": url})
                 time.sleep(1.5)
                 if not self._wait_ready(wait):
-                    raise SystemExit("❌ LeetCode 要求真人驗證，但還沒完成。請在跳出的 LeetCode 視窗裡點一下驗證，再出招一次。")
+                    raise NeedsUser()
                 out = self._eval(expr, timeout=60) or {}
             return out.get("status", 0), out.get("text", ""), out.get("mitigated", "")

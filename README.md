@@ -13,6 +13,10 @@
 - **實力分與段位**：用社群的題目難度表，依你解過最難的題目算出實力分（跟 LeetCode 競賽分同尺度），9 階段位從青銅到神話，大佬也分得出高下。有參加週賽的話會一併抓回官方競賽分。
 - **推薦廣告**：挑「努力一下打得贏」的題目，用廣告推給你，接下就是雙倍經驗的賞金任務。
 - **VS Code 整合**：選題就自動開檔，游標停在要寫程式的地方，按 `Ctrl+Shift+B` 直接提交。
+- **本地試招**：Python 3 和 C++ 直接在你的電腦上用範例測資跑，幾百毫秒就有結果、不用登入，每筆測資的輸出、正確答案和 print 都看得到。跑不了的題目（互動題等）自動改用 LeetCode 線上試跑。
+- **冒險日誌**：出招沒過自動記進錯題本（當時的程式碼、出錯的測資），可以標錯因；每週一跳出上週週報：解了幾題、實力分變化、新點亮的技能、最弱的標籤和下週建議。
+- **每日挑戰與分享卡**：每天一張所有人都一樣的地圖，打完拿到成績碼可以跟朋友比；一鍵產生段位或週報的分享圖片。
+- **不怕弄丟進度**：每天自動備份紀錄、存檔和解題檔（保留 14 份），設定頁一鍵還原。
 - **8 位個性不同的看板娘**：每位都有自己的推薦策略、台詞和小加成。想補弱點、想維持手感、想複習、想練週賽，換一位夥伴就換一種刷題節奏。
 - **每個人都能玩**：在遊戲裡登入自己的 LeetCode 帳號、換看板娘或上傳頭像、換背景，也能選解題語言（Python、C++、Java、JavaScript、Go、Rust…）。
 
@@ -89,9 +93,10 @@ LeetCode 有 Cloudflare 防火牆，程式直接送出的提交，有時會被�
 | **酒館** | 今日委託（依戰力挑的 3 題）、賞金任務、同步官網進度、擴充題庫 |
 | **遠征** | 選路線、打怪、拿遺物。戰鬥從 2~3 題裡挑一題打，答錯一次扣 10 HP（精英 16、Boss 22） |
 | **技能樹** | 加權解題分（簡單 1、中等 2、困難 3）達 2 分就點亮，最高 Lv5；前置技能點亮後才解鎖下一環 |
-| **戰力** | 段位（青銅 → 神話，每階分 IV～I）、實力分、官方競賽分、戰力、技能雷達 |
-| **題目** | 題目敘述、自訂測資、試招、出招、判題結果 |
-| **設定** | LeetCode 帳號、看板娘圖鑑與頭像、背景、解題語言、工作區 |
+| **戰力** | 段位（青銅 → 神話，每階分 IV～I）、實力分、官方競賽分、戰力、技能雷達、分享卡 |
+| **日誌** | 本週／上週週報、錯題本（標錯因、再挑戰） |
+| **題目** | 題目敘述、自訂測資、試招（本地）、出招（提交）、每筆測資的結果 |
+| **設定** | LeetCode 帳號、看板娘圖鑑與頭像、背景、解題語言、環境檢查與試招方式、存檔備份、工作區 |
 
 遺物共 12 種，例如「小黃鴨」讓每場戰鬥第一次答錯不扣血，「招財貓」可以免費換題。永久強化可以用結晶購買，例如最大 HP、遠征經驗加成、開場遺物。
 
@@ -144,7 +149,8 @@ python lc.py game                 # 開啟遊戲
 python lc.py list --undone --free # 列出還沒解的免費題
 python lc.py show 1               # 看題目
 python lc.py new 1 --lang cpp     # 建立解題檔（可選語言）
-python lc.py test 1               # 用範例測資試跑
+python lc.py test 1               # 用範例測資試跑（先在本地跑，跑不了才用 LeetCode）
+python lc.py test 1 --online      # 一律用 LeetCode 線上試跑
 python lc.py submit 1             # 正式提交
 python lc.py sync                 # 同步官網進度
 python lc.py fetch --all          # 抓全部難度的題庫
@@ -168,6 +174,8 @@ python lc.py pdf 1 9 13           # 匯出題目 PDF（需要 xhtml2pdf）
 ├── data/records.json    提交紀錄
 ├── data/game.json       遊戲存檔（遠征、結晶、賞金）
 ├── data/profile.json    暱稱、看板娘、背景
+├── data/mistakes.json   錯題本
+├── backups/             每日存檔快照（不含登入 cookie）
 └── assets/              你上傳的頭像與背景
 ```
 
@@ -213,10 +221,16 @@ game/engine.py        演算法：技能樹、戰力、推薦
 game/rogue.py         肉鴿遠征：地圖、戰鬥、遺物、強化
 game/server.py        本機伺服器（只聽 127.0.0.1）
 game/browser_login.py 瀏覽器一鍵登入、瀏覽器代送提交（DevTools Protocol）
+game/localrun.py      本地試跑：Python／C++ 測試外殼、範例答案比對
+game/mistakes.py      錯題本
+game/weekly.py        週報
+game/backup.py        每日存檔快照與還原
 game/static/          遊戲畫面（純 HTML/CSS/JS，沒有外部框架）
 data/problems.json    內建題庫（簡單題）
+tests/                單元測試（python -m unittest discover -s tests）
 build.bat             Windows 打包腳本
 tools/release.yml     自動打包發佈的 GitHub Actions 範本
+tools/ci.yml          每次 push 自動跑測試的 GitHub Actions 範本
 ```
 
 ## 常見問題
@@ -226,6 +240,12 @@ cookie 過期了，到「設定 → 帳號」再登入一次。
 
 **Q：出招出現 `IndentationError`，或說「還是空白範本」？**
 解題檔還沒存檔（VS Code 分頁標題旁邊有白點 ●）。按 `Ctrl+S`，或在設定頁安裝 VS Code 任務來開啟自動存檔。
+
+**Q：試招說「改用 LeetCode 線上試跑」？**
+本地試跑目前支援 Python 3 和 C++。用別的語言、這台電腦沒有 Python 或 C++ 編譯器，或是互動題、有隱藏參數的題目（例如鏈結串列的環），就會改用 LeetCode。到「設定 → 環境與試招」看缺什麼、怎麼裝。
+
+**Q：本地試招全對，出招卻沒過？**
+本地只跑題目裡的範例，LeetCode 出招會跑幾十到幾百筆隱藏測資。沒過的那筆會記進錯題本，裡面有出錯的輸入，貼到「自訂測資」就能在本地重現。
 
 **Q：瀏覽器登入說找不到 Edge 或 Chrome？**
 用手動貼 cookie，或設定環境變數 `LCD_BROWSER` 指向瀏覽器執行檔。
@@ -244,6 +264,8 @@ cookie 過期了，到「設定 → 帳號」再登入一次。
 歡迎 Issue 和 PR！一些想做的方向：力扣中文站支援、更多看板娘與遺物、成就系統、多人排行榜。
 
 前端沒有建置步驟，改完 `game/static/` 重新整理瀏覽器就能看到；改 Python 則要重新啟動 `python lc.py game`。
+
+送 PR 前先跑測試：`python -m unittest discover -s tests`。要讓 GitHub 每次 push 自動跑，把 `tools/ci.yml` 複製到 `.github/workflows/ci.yml`。
 
 ## 授權
 

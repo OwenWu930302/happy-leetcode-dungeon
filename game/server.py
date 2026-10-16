@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,7 +31,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import lc  # noqa: E402
-from game import browser_login, engine, rogue  # noqa: E402
+from game import backup, browser_login, engine, localrun, mistakes, rogue, weekly  # noqa: E402
 
 STATIC = lc.APP_DIR / "game" / "static"
 SAVE_PATH = lc.DATA_DIR / "game.json"
@@ -138,6 +139,7 @@ def load_world():
 def context(problems, records):
     if not engine.RATINGS:
         engine.set_ratings(lc.load_ratings())
+    engine.set_mistakes(mistakes.open_by_slug(mistakes.load(lc.DATA_DIR)))
     tree = engine.build_tree(problems, records)
     power = engine.compute_power(problems, records, contest=lc.load_json(lc.DATA_DIR / "contest.json", None))
     st = strategy()
@@ -179,10 +181,59 @@ def code_line(path: Path) -> int:
     return (sigs[-1] + 2) if sigs else start + 2
 
 
+def vscode_cli():
+    code = shutil.which("code") or shutil.which("code.cmd")
+    if code or os.name != "nt":
+        return code
+    for base in (os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles", "")):
+        f = Path(base) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd" if base else None
+        if f and f.exists():
+            return str(f)
+        f = Path(base) / "Microsoft VS Code" / "bin" / "code.cmd" if base else None
+        if f and f.exists():
+            return str(f)
+    return None
+
+
+def env_checks(fresh=False) -> list:
+    """首次啟動／設定頁的環境檢查。每一項：有沒有、是什麼版本、缺了怎麼補。"""
+    if fresh:
+        localrun._CACHE.clear()
+    info = localrun.env_info()
+    browser = browser_login.find_browser()
+    code = vscode_cli()
+    lang = lc.default_lang()
+    prof = load_profile()
+    win = os.name == "nt"
+    py, cxx = info["python"], info["cxx"]
+    return [
+        {"id": "vscode", "label": "VS Code", "ok": bool(code), "need": False,
+         "detail": "可以一鍵開檔" if code else "沒找到（遊戲仍可玩，只是要自己開檔）",
+         "fix": "到官網下載安裝；安裝時勾選「加入 PATH」，裝完重開遊戲。", "link": "https://code.visualstudio.com/"},
+        {"id": "python", "label": "Python 3", "ok": bool(py), "need": lang == "python3",
+         "detail": py["version"] if py else "沒找到（寫 Python 的話，試招會改用 LeetCode 線上試跑）",
+         "fix": "到 python.org 下載 Python 3；安裝第一個畫面勾選「Add python.exe to PATH」。",
+         "link": "https://www.python.org/downloads/"},
+        {"id": "cxx", "label": "C++ 編譯器", "ok": bool(cxx), "need": lang == "cpp",
+         "detail": cxx["version"] if cxx else "沒找到（寫 C++ 的話，試招會改用 LeetCode 線上試跑）",
+         "fix": ("裝 MSYS2，打開「MSYS2 UCRT64」視窗輸入 pacman -S mingw-w64-ucrt-x86_64-gcc，"
+                 "再把 C:\\msys64\\ucrt64\\bin 加進系統 PATH，重開遊戲。只寫 Python 可以略過。") if win
+                else "用套件管理員安裝 g++（例如 sudo apt install g++）。只寫 Python 可以略過。",
+         "link": "https://www.msys2.org/" if win else ""},
+        {"id": "browser", "label": "Edge／Chrome", "ok": bool(browser), "need": True,
+         "detail": Path(browser).stem if browser else "沒找到（登入與提交需要）",
+         "fix": "安裝 Microsoft Edge 或 Google Chrome；登入和提交都會用它在背景代送。",
+         "link": "https://www.microsoft.com/edge"},
+        {"id": "login", "label": "LeetCode 登入", "ok": logged_in(lc.load_config()), "need": True,
+         "detail": (prof.get("lcUser") or "已登入") if logged_in(lc.load_config()) else "還沒登入（出招需要）",
+         "fix": "到「設定 → 帳號」按「用瀏覽器登入」。", "link": ""},
+    ]
+
+
 def open_in_editor(path: Path, line=None):
     line = line or (code_line(path) if path.is_file() else None)
     target = f"{path}:{line}" if line else str(path)
-    code = shutil.which("code") or shutil.which("code.cmd")
+    code = vscode_cli()
     if code:
         try:
             args = [code, "-r", "-g", target] if line else [code, target]
@@ -262,7 +313,13 @@ def build_state(save, events=None):
         "perTag": per_tag,
         "run": run_view,
         "meta": {"upgrades": rogue.public_upgrades(save), "history": save["meta"]["history"],
-                 "bounties": save["meta"]["bounties"], "runs": save["meta"].get("runs_started", 0)},
+                 "bounties": save["meta"]["bounties"], "runs": save["meta"].get("runs_started", 0),
+                 "daily": {"today": date.today().isoformat(),
+                           "best": (save["meta"].get("daily") or {}).get(date.today().isoformat()),
+                           "recent": sorted((save["meta"].get("daily") or {}).values(),
+                                            key=lambda d: d["day"], reverse=True)[:7]}},
+        "weeklyPending": save["meta"].get("weekly_seen") != weekly.week_key(),
+        "mistakesOpen": sum(mistakes.open_by_slug(mistakes.load(lc.DATA_DIR)).values()),
         "relics": rogue.public_relics(),
         "nodeTypes": {k: v["name"] for k, v in rogue.NODE_TYPES.items()},
         "picks": picks,
@@ -276,6 +333,7 @@ def build_state(save, events=None):
         "langs": [{"id": k, "name": v[2]} for k, v in lc.LANGS.items()],
         "lang": lc.default_lang(),
         "transport": lc.transport(),
+        "testMode": lc.test_mode(),
         "workspace": str(lc.ROOT),
         "frozen": lc.FROZEN,
         "browserLogin": bool(browser_login.find_browser()),
@@ -317,6 +375,12 @@ def api(path, body, query):
     if path == "/api/relay/status":  # 出招時會一直拿著 LOCK，這個查詢要能同時回應
         relay = lc._RELAY
         return relay.status() if relay else {"needsUser": False, "ready": False}
+    if path == "/api/progress":  # 同上：出招進度（送出中／判題中）
+        pr = lc.PROGRESS
+        relay = lc._RELAY
+        return {"phase": pr["phase"], "action": pr["action"], "polls": pr["polls"],
+                "elapsed": round(time.time() - pr["since"], 1) if pr["phase"] else 0,
+                "needsUser": bool(relay and relay.status().get("needsUser"))}
     with LOCK:
         save = load_save()
         problems, records = load_world()
@@ -356,6 +420,12 @@ def api(path, body, query):
                     raise ValueError("沒有這種提交方式")
                 cfg = lc.load_config()
                 cfg["transport"] = body["transport"]
+                lc.save_json(lc.CONFIG_PATH, cfg)
+            if "testMode" in body:
+                if body["testMode"] not in ("auto", "local", "online"):
+                    raise ValueError("沒有這種試跑方式")
+                cfg = lc.load_config()
+                cfg["testMode"] = body["testMode"]
                 lc.save_json(lc.CONFIG_PATH, cfg)
             if "lang" in body:
                 if body["lang"] not in lc.LANGS:
@@ -416,6 +486,47 @@ def api(path, body, query):
             save_profile(prof)
             return build_state(save)
 
+        if path == "/api/env":
+            return {"checks": env_checks(fresh=bool(body.get("fresh")))}
+
+        if path == "/api/backup/list":
+            return {"backups": backup.listing(lc.ROOT), "dir": str(backup.backup_dir(lc.ROOT))}
+
+        if path == "/api/backup/now":
+            made = backup.snapshot(lc.ROOT, "manual")
+            if not made:
+                raise ValueError("還沒有任何進度可以備份")
+            return {"made": made.name, "backups": backup.listing(lc.ROOT)}
+
+        if path == "/api/backup/restore":
+            out = backup.restore(lc.ROOT, str(body.get("name", "")))
+            engine.set_ratings(lc.load_ratings())
+            return {**out, "backups": backup.listing(lc.ROOT), **build_state(load_save())}
+
+        if path == "/api/journal":
+            items = mistakes.load(lc.DATA_DIR)
+            start = weekly.week_start()
+            if body.get("week") == "last":
+                start = start - weekly.timedelta(days=7)
+            return {"report": weekly.report(problems, records, items, start),
+                    "mistakes": mistakes.public(items), "summary": mistakes.summary(items),
+                    "causes": mistakes.CAUSES}
+
+        if path == "/api/journal/seen":
+            save["meta"]["weekly_seen"] = weekly.week_key()
+            write_save(save)
+            return {"ok": True}
+
+        if path == "/api/mistake/tag":
+            mistakes.tag(lc.DATA_DIR, str(body.get("id")), body.get("cause"), body.get("note"))
+            items = mistakes.load(lc.DATA_DIR)
+            return {"mistakes": mistakes.public(items), "summary": mistakes.summary(items)}
+
+        if path == "/api/mistake/delete":
+            mistakes.remove(lc.DATA_DIR, str(body.get("id")))
+            items = mistakes.load(lc.DATA_DIR)
+            return {"mistakes": mistakes.public(items), "summary": mistakes.summary(items)}
+
         if path == "/api/workspace/open":
             how = open_in_editor(lc.ROOT)
             if how == "none" and os.name == "nt":
@@ -451,12 +562,19 @@ def api(path, body, query):
             p = find(body["slug"])
             if not lc.solution_path(p).exists():
                 lc.create_solution(p)
-            res = lc.run_test(p, body.get("input") or None)
+            where = body.get("where") if body.get("where") in ("local", "online") else None
+            try:
+                res = lc.run_test(p, body.get("input") or None, where)
+            finally:
+                lc.set_progress(None)
             return {"result": slim(res)}
 
         if path == "/api/submit":
             p = find(body["slug"])
-            res, ok = lc.run_submit(p)
+            try:
+                res, ok = lc.run_submit(p)
+            finally:
+                lc.set_progress(None)
             return {"result": slim(res), "accepted": ok, **build_state(load_save())}
 
         if path == "/api/sync":
@@ -504,7 +622,8 @@ def api(path, body, query):
             if path == "/api/run/start":
                 if save.get("run") and save["run"]["status"] == "active":
                     raise ValueError("遠征還在進行中")
-                rogue.start_run(save, persona=persona_of(load_profile()))
+                rogue.start_run(save, persona=persona_of(load_profile()),
+                                daily=date.today().isoformat() if body.get("daily") else None)
             elif path == "/api/run/enter":
                 events = rogue.enter(save, body["key"], ctx)
             elif path == "/api/run/choose":
@@ -536,7 +655,7 @@ def slim(res):
     keep = ("status_msg", "code_answer", "expected_code_answer", "compile_error", "full_compile_error",
             "runtime_error", "full_runtime_error", "total_correct", "total_testcases", "status_runtime",
             "status_memory", "last_testcase", "code_output", "expected_output", "std_output_list",
-            "correct_answer", "_input")
+            "correct_answer", "_input", "local", "engine", "cases", "_fallback", "elapsed_ms")
     return {k: res.get(k) for k in keep if res.get(k) not in (None, "", [])}
 
 
@@ -598,13 +717,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._send(200, api(u.path, body, parse_qs(u.query)))
         except SystemExit as e:
-            self._send(400, {"error": str(e.code).strip()})
+            self._send(400, {"error": str(e.code).strip(), "kind": getattr(e, "kind", "other")})
         except (ValueError, KeyError, IndexError) as e:
             self._send(400, {"error": str(e)})
         except LookupError as e:
             self._send(404, {"error": str(e)})
         except lc.requests.RequestException as e:
-            self._send(502, {"error": f"連不到 LeetCode：{e}"})
+            self._send(502, {"error": "❌ 連不到 LeetCode：網路斷了，或 LeetCode 暫時沒有回應。\n"
+                                      f"   技術細節：{type(e).__name__}: {e}", "kind": "network"})
         except Exception as e:  # noqa: BLE001
             self._send(500, {"error": f"{type(e).__name__}: {e}"})
 
@@ -623,6 +743,12 @@ def _refresh_ratings():
 
 def serve(port=8765, open_browser=True):
     lc.ensure_home()
+    try:
+        made = backup.daily(lc.ROOT)
+        if made:
+            print(f"💾 今天的存檔快照：{made.name}")
+    except OSError as e:
+        print(f"⚠️  今天的存檔快照沒做成：{e}")
     engine.set_ratings(lc.load_ratings())
     threading.Thread(target=_refresh_ratings, daemon=True).start()
     if not lc.PROBLEMS_PATH.exists():

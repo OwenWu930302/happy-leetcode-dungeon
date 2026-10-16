@@ -556,15 +556,24 @@ def _weighted_pick(rng, pool, k):
     return picked
 
 
+MISTAKES = {}  # slug -> 錯題本裡還沒解決的筆數（伺服器每次算推薦前更新）
+
+
+def set_mistakes(m):
+    MISTAKES.clear()
+    MISTAKES.update(m or {})
+
+
 def review_candidates(problems, records, exclude=(), now=None):
-    """星璃的複習清單：以前答錯過、或很久沒碰的已解題（間隔重複）。"""
+    """星璃的複習清單：錯題本裡還沒解決的、以前答錯過的、很久沒碰的已解題（間隔重複）。"""
     from datetime import datetime
     now = now or datetime.now()
     by_slug = {p["slug"]: p for p in problems}
     out = []
     for slug, r in records.items():
         p = by_slug.get(slug)
-        if not r.get("solved") or not p or not playable(p) or slug in exclude:
+        open_m = MISTAKES.get(slug, 0)
+        if not p or not playable(p) or slug in exclude or not (r.get("solved") or open_m):
             continue
         times = [a.get("time") for a in r.get("attempts", []) if a.get("time")]
         try:
@@ -573,10 +582,11 @@ def review_candidates(problems, records, exclude=(), now=None):
             last = None
         days = (now - last).days if last else 30
         wrong = sum(1 for a in r.get("attempts", []) if a.get("accepted") is False)
-        if days < 3 and not wrong:
+        if days < 3 and not wrong and not open_m:
             continue
-        s = min(1.0, days / 14) * 0.7 + min(0.6, wrong * 0.2) + 0.1
-        why = f"以前答錯 {wrong} 次，再練一次會更穩" if wrong else f"{days} 天前解過，該複習了"
+        s = min(1.0, days / 14) * 0.7 + min(0.6, wrong * 0.2) + min(0.9, open_m * 0.45) + 0.1
+        why = (f"錯題本裡還有 {open_m} 筆沒解決，把它拿下吧" if open_m
+               else f"以前答錯 {wrong} 次，再練一次會更穩" if wrong else f"{days} 天前解過，該複習了")
         out.append((s, p, problem_rating(p), why))
     out.sort(key=lambda c: -c[0])
     return out

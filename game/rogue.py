@@ -12,6 +12,7 @@
 - HP 歸零這局就結束，但會留下「靈魂結晶」可以買永久強化
 """
 
+import hashlib
 import random
 from datetime import datetime
 
@@ -171,8 +172,34 @@ def _add_relic(run, rid):
     _log(run, f"獲得遺物「{RELICS[rid][0]}」")
 
 
-def start_run(save, seed=None, persona="p0"):
+def daily_seed(day: str) -> int:
+    """每日挑戰的種子：同一天所有玩家都一樣。day 是 'YYYY-MM-DD'。"""
+    return int(hashlib.sha256(f"lcd-daily-{day}".encode()).hexdigest()[:7], 16)
+
+
+def _result_code(run, won, floors) -> str:
+    """每日挑戰的成績碼：日期、勝負、層數、剩餘血量、用時，加 4 碼檢查碼。"""
+    t0 = datetime.strptime(run["started_at"], "%Y-%m-%d %H:%M:%S")
+    minutes = max(1, round((datetime.now() - t0).total_seconds() / 60))
+    day = run["daily"].replace("-", "")
+    body = f"{day}-{'W' if won else 'L'}{floors:02d}-{max(0, run['hp'])}HP-{minutes}M"
+    chk = hashlib.sha256(f"{body}|{run['seed']}".encode()).hexdigest()[:4].upper()
+    return f"LCD-{body}-{chk}"
+
+
+def _better(a, b) -> bool:
+    """a 是否比 b 好：先比勝負，再比層數、剩餘血量、用時。"""
+    if b is None:
+        return True
+    ka = (a["won"], a["floors"], a["hp"], -a["minutes"])
+    kb = (b["won"], b["floors"], b["hp"], -b["minutes"])
+    return ka > kb
+
+
+def start_run(save, seed=None, persona="p0", daily=None):
     meta = save["meta"]
+    if daily:
+        seed = daily_seed(daily)
     seed = seed if seed is not None else random.randrange(1 << 30)
     rng = random.Random(seed)
     ups = meta["upgrades"]
@@ -180,14 +207,16 @@ def start_run(save, seed=None, persona="p0"):
     run = {
         "seed": seed, "started_at": NOW(), "status": "active",
         "hp": max_hp, "max_hp": max_hp, "gold": 25 * ups.get("purse", 0),
-        "relics": [], "map": gen_map(rng, mystery_boost=(persona == "p5")), "pos": None, "cleared": [],
+        # 每日挑戰：地圖只看日期，不受看板娘影響，大家才會拿到同一張
+        "relics": [], "map": gen_map(rng, mystery_boost=(persona == "p5" and not daily)), "pos": None, "cleared": [],
         "current": None, "pending": None, "xp": 0, "kills": 0, "log": [], "used_slugs": [],
-        "persona": persona, "streak": 0, "dayStreak": 0,
+        "persona": persona, "streak": 0, "dayStreak": 0, "daily": daily,
     }
     if ups.get("starter"):
         _add_relic(run, rng.choice(list(RELICS)))
     meta["runs_started"] = meta.get("runs_started", 0) + 1
-    _log(run, f"第 {meta['runs_started']} 次遠征開始！種子 #{seed}")
+    _log(run, f"每日挑戰 {daily} 開始！今天的地圖大家都一樣" if daily
+         else f"第 {meta['runs_started']} 次遠征開始！種子 #{seed}")
     save["run"] = run
     return run
 
@@ -380,6 +409,21 @@ def _finish(save, won):
     run["current"] = None
     run["pending"] = None
     run["result"] = {"won": won, "floors": floors, "shards": shards, "xp": run["xp"], "kills": run["kills"]}
+    if run.get("daily"):
+        code = _result_code(run, won, floors)
+        mins = int(code.split("-")[4][:-1])
+        res = {"day": run["daily"], "code": code, "won": won, "floors": floors,
+               "hp": max(0, run["hp"]), "minutes": mins, "at": NOW()}
+        daily = meta.setdefault("daily", {})
+        prev = daily.get(run["daily"])
+        res["tries"] = (prev or {}).get("tries", 0) + 1
+        if _better(res, prev):
+            daily[run["daily"]] = res
+        else:
+            prev["tries"] = res["tries"]
+        for old in sorted(daily)[:-30]:  # 只留最近 30 天
+            del daily[old]
+        run["result"]["code"] = code
     meta["history"].insert(0, {
         "ended_at": NOW(), "won": won, "floors": floors, "kills": run["kills"],
         "xp": run["xp"], "shards": shards, "relics": list(run["relics"]), "seed": run["seed"],

@@ -34,6 +34,7 @@
   <button role="tab" data-tab="run"><span>遠征</span></button>
   <button role="tab" data-tab="tree"><span>技能樹</span></button>
   <button role="tab" data-tab="power"><span>戰力</span></button>
+  <button role="tab" data-tab="journal"><span>日誌</span></button>
   <button role="tab" data-tab="problem"><span>題目</span></button>
   <button role="tab" data-tab="settings"><span>設定</span></button>
 </nav>
@@ -43,6 +44,7 @@
   <section id="tab-run" class="tab" hidden></section>
   <section id="tab-tree" class="tab" hidden></section>
   <section id="tab-power" class="tab" hidden></section>
+  <section id="tab-journal" class="tab" hidden></section>
   <section id="tab-problem" class="tab" hidden></section>
   <section id="tab-settings" class="tab" hidden></section>
 </main>
@@ -51,7 +53,7 @@
 <div id="modal" hidden><div class="modal-card" id="modalCard"></div></div>
 <aside id="ad" hidden></aside>
 <div id="toasts" aria-live="polite"></div>
-<div id="busy" hidden><div class="busy-card"><div class="spinner"></div><div id="busyTxt">判題中…</div></div></div>
+<div id="busy" hidden><div class="busy-card"><div class="spinner"></div><div id="busyTxt">判題中…</div><div id="busySteps" aria-live="polite"></div></div></div>
 
 <script src="app.js"></script>
 </body>
