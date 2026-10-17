@@ -1,0 +1,45 @@
+name: 新看板娘提案
+description: 提案一位新的看板娘（或新台詞、新劇情）
+labels: [companion]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先看一下 [美術指南](https://github.com/OwenWu930302/happy-leetcode-dungeon/blob/main/docs/ART_GUIDE.md) 和 [資料包格式](https://github.com/OwenWu930302/happy-leetcode-dungeon/blob/main/docs/MODS.md)。最方便的方式是先做成資料包，自己玩過再提案。
+  - type: input
+    id: name
+    attributes:
+      label: 名字與稱號
+      placeholder: 珀拉・迴圈工匠
+    validations:
+      required: true
+  - type: textarea
+    id: intro
+    attributes:
+      label: 介紹與個性
+    validations:
+      required: true
+  - type: textarea
+    id: strategy
+    attributes:
+      label: 她怎麼推薦題目？流派技能沿用誰的？
+  - type: textarea
+    id: lines
+    attributes:
+      label: 幾句代表台詞
+  - type: textarea
+    id: art
+    attributes:
+      label: 圖像來源
+      description: 自己畫的、AI 生成的（用什麼工具）、或其他。必須是原創，不能是現有作品的角色。
+    validations:
+      required: true
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: 確認
+      options:
+        - label: 角色是原創的，不是現有動畫、遊戲、漫畫的角色
+          required: true
+        - label: 內容是全年齡的
+          required: true

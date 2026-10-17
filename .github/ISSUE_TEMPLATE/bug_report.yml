@@ -1,0 +1,35 @@
+name: 錯誤回報
+description: 遊戲出錯、畫面怪怪的、某個功能不能用
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        謝謝你回報！在遊戲的「設定 → 工作區 → 產生錯誤報告」可以拿到一段已經遮掉個人資料的報告，貼在下面最快。
+  - type: textarea
+    id: what
+    attributes:
+      label: 發生了什麼事？
+      description: 你做了什麼、預期會怎樣、結果怎樣
+      placeholder: 我在遠征的 Boss 戰按了「出招」，結果……
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: 錯誤報告
+      description: 「設定 → 工作區 → 產生錯誤報告」複製出來的內容
+      render: markdown
+  - type: dropdown
+    id: how
+    attributes:
+      label: 你怎麼執行遊戲？
+      options:
+        - 下載的 EXE（Windows）
+        - 從原始碼（python lc.py game）
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截圖（可以不填）
