@@ -1050,6 +1050,8 @@ browser-profile/
 .vscode/
 data/localrun/
 backups/
+logs/
+mods/
 """
 
 

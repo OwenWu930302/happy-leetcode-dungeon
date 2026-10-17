@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: python -m pip install requests pyinstaller
 
+      - name: Record build info
+        run: python tools/build_info.py "${{ github.sha }}" "${{ github.ref_name }}"
+
       - name: Build EXE
         shell: cmd
         run: >
@@ -33,6 +36,7 @@ jobs:
           --icon assets\icon.ico
           --add-data "game\static;game\static"
           --add-data "data\problems.json;data"
+          --add-data "game\build_info.json;game"
           --collect-submodules game
           --exclude-module xhtml2pdf --exclude-module reportlab
           launcher.py

@@ -6,6 +6,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let S = null;                 // 伺服器狀態
+let COMP = {};                // id -> 看板娘資料（內建＋資料包）
 let tab = "home";
 let focusSlug = null;         // 目前在看的題目
 let selNode = null;           // 技能樹選中的節點
@@ -20,6 +21,7 @@ try { focusSlug = localStorage.getItem("focusSlug") || null; tab = localStorage.
 
 /* ================= API ================= */
 const OFFLINE_MSG = "遊戲斷線了，請重新開啟遊戲後再試一次。";
+let lastBug = "";
 let offlineTimer = null, lastNetError = "";
 
 function setOffline(on) {
@@ -80,6 +82,7 @@ async function api(path, body) {
   if (!res.ok || data.error) {
     const err = new Error(data.error || `錯誤 ${res.status}`);
     err.kind = data.kind || "other";
+    if (err.kind === "bug") lastBug = `${path}\n${data.error}\n${data.trace || ""}`;
     throw err;
   }
   return data;
@@ -92,7 +95,7 @@ async function act(path, body, busyText) {
     if (st.player) applyState(st);
     return st;
   } catch (e) {
-    toast("info", "出了點狀況", e.message);
+    toast("info", e.kind === "bug" ? "遊戲出了一點錯" : "出了點狀況", e.kind === "bug" ? "到「設定 → 工作區」可以產生錯誤報告" : e.message);
     if (e.message !== OFFLINE_MSG) say(`唔……<em>${esc(e.message).slice(0, 80)}</em>`);
     else say("連不上遊戲了……重新開啟遊戲後我就回來！");
     return null;
@@ -124,11 +127,30 @@ const ACC = {
   halo: () => `<ellipse cx="50" cy="12" rx="17" ry="4.5" fill="none" stroke="#ffe7ad" stroke-width="2.5"/>`,
 };
 let uidN = 0;
-function avatarSVG(id) {
+// 表情差分：同一張臉，眉毛、眼睛、嘴巴換個樣子
+const MOODS = {
+  normal: { brow: ["M35.5 52.5 Q41 49.5 46.5 52.2", "M53.5 52.2 Q59 49.5 64.5 52.5"], mouth: `<path d="M47 67.5 Q50 70 53 67.5" stroke="#b5605a" stroke-width="1.4" fill="none" stroke-linecap="round"/>` },
+  happy: { brow: ["M35.5 51.2 Q41 48 46.5 51", "M53.5 51 Q59 48 64.5 51.2"], closed: true, blush: 0.75,
+    mouth: `<path d="M45.6 66.4 Q50 73.2 54.4 66.4 Z" fill="#b5605a"/><path d="M47.4 69.6 Q50 71.4 52.6 69.6" fill="#f19a9a"/>` },
+  worried: { brow: ["M35.5 51.2 Q41 51.4 46.5 48.4", "M53.5 48.4 Q59 51.4 64.5 51.2"], sweat: true,
+    mouth: `<path d="M46.6 69.6 Q50 66.8 53.4 69.6" stroke="#b5605a" stroke-width="1.4" fill="none" stroke-linecap="round"/>` },
+  surprised: { brow: ["M35.5 49.2 Q41 45.6 46.5 48.9", "M53.5 48.9 Q59 45.6 64.5 49.2"], wide: true,
+    mouth: `<ellipse cx="50" cy="68.6" rx="2.3" ry="2.9" fill="#b5605a"/>` },
+  serious: { brow: ["M35.5 49.6 Q41 50.2 46.8 53", "M53.2 53 Q59 50.2 64.5 49.6"], narrow: true,
+    mouth: `<path d="M46.6 68.4 L53.4 68.4" stroke="#b5605a" stroke-width="1.5" stroke-linecap="round"/>` },
+};
+function avatarSVG(id, mood = "normal") {
+  const mc = COMP[id];
+  if (mc && mc.mod && mc.image) return `<img class="mod-av" src="${esc(mc.image)}" alt="${esc(mc.name)}">`;
   const a = AVATARS.find((x) => x.id === id) || AVATARS[0];
   const u = "a" + (++uidN);
-  const eyes = [41, 59].map((x, i) => `<ellipse cx="${x}" cy="57" rx="5" ry="6.2" fill="#fff"/><ellipse cx="${x}" cy="58" rx="3.8" ry="5.2" fill="url(#${u}I)"/><ellipse cx="${x}" cy="59" rx="1.6" ry="2.4" fill="${a.eye[2]}"/><circle cx="${x - 1.4}" cy="55.6" r="1.4" fill="#fff"/>
-    <path d="${i ? "M53.5 52.2 Q59 49.5 64.5 52.5" : "M35.5 52.5 Q41 49.5 46.5 52.2"}" stroke="${a.hair[1]}" stroke-width="1.8" fill="none" stroke-linecap="round"/>`).join("");
+  const m = MOODS[mood] || MOODS.normal;
+  const eyes = [41, 59].map((x, i) => {
+    const brow = `<path d="${m.brow[i]}" stroke="${a.hair[1]}" stroke-width="1.8" fill="none" stroke-linecap="round"/>`;
+    if (m.closed) return `<path d="M${x - 5} 59 Q${x} 53.4 ${x + 5} 59" stroke="${a.eye[2]}" stroke-width="2" fill="none" stroke-linecap="round"/>${brow}`;
+    const ry = m.wide ? 7 : m.narrow ? 4.6 : 6.2, rx = m.wide ? 5.6 : 5;
+    return `<ellipse cx="${x}" cy="57" rx="${rx}" ry="${ry}" fill="#fff"/><ellipse cx="${x}" cy="58" rx="${m.wide ? 3.2 : 3.8}" ry="${m.narrow ? 3.8 : m.wide ? 4.4 : 5.2}" fill="url(#${u}I)"/><ellipse cx="${x}" cy="59" rx="1.6" ry="${m.wide ? 2 : 2.4}" fill="${a.eye[2]}"/><circle cx="${x - 1.4}" cy="55.6" r="1.4" fill="#fff"/>${brow}`;
+  }).join("");
   const behind = a.acc === "halo" || a.acc === "phones" ? "" : "";
   return `<svg viewBox="0 0 100 100" role="img" aria-label="${esc(a.name)}">
 <defs><linearGradient id="${u}H" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${a.hair[0]}"/><stop offset="1" stop-color="${a.hair[1]}"/></linearGradient>
@@ -139,17 +161,30 @@ ${a.acc === "cat" ? ACC.cat(a) : ""}${a.acc === "horns" ? ACC.horns(a) : ""}
 <path d="M19 58 C14 26 34 11 50 11 C66 11 86 26 81 58 L83 92 L67 81 L50 88 L33 81 L17 92 Z" fill="url(#${u}H)"/>
 <path d="M36 76 L64 76 L70 100 L30 100 Z" fill="#232a40"/><path d="M44 76 L50 86 L56 76 Z" fill="${a.tie}"/>
 <ellipse cx="50" cy="53" rx="22" ry="24" fill="#f4dfcc"/>
-<ellipse cx="37" cy="64" rx="4.5" ry="2.4" fill="#f19a9a" opacity=".45"/><ellipse cx="63" cy="64" rx="4.5" ry="2.4" fill="#f19a9a" opacity=".45"/>
+<ellipse cx="37" cy="64" rx="4.5" ry="2.4" fill="#f19a9a" opacity="${m.blush || 0.45}"/><ellipse cx="63" cy="64" rx="4.5" ry="2.4" fill="#f19a9a" opacity="${m.blush || 0.45}"/>
 ${eyes}
-<path d="M47 67.5 Q50 70 53 67.5" stroke="#b5605a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+${m.mouth}
 <path d="M27 52 C26 31 38 22 50 22 C62 22 74 31 73 52 C69 42 63 37 59 35 C58 41 55 45 51 47 C50 41 47 37 43 36 C39 41 33 46 27 52 Z" fill="url(#${u}B)"/>
 <path d="M50 23 C51 15 57 12 61 10 C57 15 55 18 53 24 Z" fill="${a.hair[0]}"/>
-${a.acc !== "cat" && a.acc !== "horns" ? ACC[a.acc](a) : ""}</svg>`;
+${a.acc !== "cat" && a.acc !== "horns" ? ACC[a.acc](a) : ""}
+${m.sweat ? `<path d="M72 44 Q75.5 50 72 52.6 Q68.5 50 72 44 Z" fill="#9cd4e6" stroke="#5f9fb3" stroke-width=".6"/>` : ""}</svg>`;
 }
 const profile = () => (S && S.profile) || { avatar: "p0", companion: "露緹", name: "", bg: "dungeon", dim: 0.55, uploads: {} };
+let mood = "normal", moodTimer = null;
 function avatarHTML(p = profile()) {
   if (p.avatar === "upload" && p.uploads && p.uploads.avatar) return `<img src="/user-asset/avatar?v=${esc(p.uploads.avatar.split("v=")[1] || "1")}" alt="頭像">`;
-  return avatarSVG(p.avatar);
+  return avatarSVG(p.avatar, mood);
+}
+// 換表情：幾秒後回到平常的樣子（上傳的頭像沒有表情差分）
+function setMood(m, ms = 4500) {
+  mood = MOODS[m] ? m : "normal";
+  clearTimeout(moodTimer);
+  if (S) { $("#mascotBox").innerHTML = avatarHTML(profile()); $("#mascotBox").dataset.mood = mood; }
+  if (mood !== "normal" && ms) moodTimer = setTimeout(() => setMood(battleMood(), 0), ms);
+}
+function battleMood() {
+  const cur = S && S.run && S.run.status === "active" && S.run.current;
+  return cur && cur.type === "boss" ? "serious" : "normal";
 }
 let avatarKey = "";
 function applyLook() {
@@ -158,6 +193,7 @@ function applyLook() {
   if (key === avatarKey) return;
   avatarKey = key;
   $("#mascotBox").innerHTML = avatarHTML(p);
+  $("#mascotBox").dataset.mood = mood;
   document.body.dataset.bg = p.bg === "upload" && !p.uploads?.bg ? "dungeon" : p.bg;
   if (p.bg === "upload" && p.uploads?.bg) {
     const d = Number(p.dim ?? 0.55);
@@ -169,7 +205,6 @@ $("#mascotBox").innerHTML = avatarSVG("p0");
 $("#mascotBox").addEventListener("click", () => setTab("settings"));
 
 /* ---------- 看板娘個性 ---------- */
-let COMP = {};   // id -> 角色資料（companions.json）
 const persona = () => COMP[(S && S.persona) || "p0"] || COMP.p0 || { name: "露緹", lines: {} };
 const compName = () => (S && S.profile && S.profile.companion) || persona().name || "露緹";
 function line(key, fallback = "") {
@@ -289,11 +324,23 @@ function applyState(st) {
   if (!firstLoad) {
     const newly = [...lit].filter((id) => !prevLit.has(id));
     newly.forEach((id, i) => setTimeout(() => toast("win", `技能點亮：${nodeName(id)}`, "下一環的技能解鎖了"), 400 + i * 500));
-    if (newly.length) { confetti(60); say(`<em>${newly.map(nodeName).join("、")}</em>：` + line("lit")); }
-    if (st.player.level > prevLevel) { toast("win", `升級！LV ${st.player.level}`, st.player.title); confetti(120); sayLine("levelup"); }
+    if (newly.length) {
+      confetti(60); say(`<em>${newly.map(nodeName).join("、")}</em>：` + line("lit")); setMood("surprised");
+      for (const k in tplCache) delete tplCache[k]; // 點亮了新技能：模板解鎖狀態要重抓
+    }
+    if (st.player.level > prevLevel) { toast("win", `升級！LV ${st.player.level}`, st.player.title); confetti(120); sayLine("levelup"); setMood("surprised"); }
   }
   prevLit = lit; prevLevel = st.player.level;
+  const syn = new Set((st.run && st.run.synergies) || []);
+  if (!firstLoad && old && old.run) {
+    for (const id of syn) if (!((old.run.synergies || []).includes(id))) {
+      const sy = (st.meta.synergies || []).find((x) => x.id === id);
+      if (sy) { toast("win", `組合技發動：${sy.name}`, sy.desc); confetti(50); }
+    }
+  }
   handleEvents(st.events || [], old);
+  const bm = battleMood();  // Boss 戰時看板娘會嚴肅起來
+  if ((mood === "normal" || mood === "serious") && mood !== bm) setMood(bm, 0);
   firstLoad = false;
   render();
   if (!weeklyChecked) maybeWeekly();
@@ -303,11 +350,13 @@ function handleEvents(evts) {
   for (const e of evts) {
     if (e.kind === "hit") {
       hitFx();
+      setMood("worried");
       toast("hit", e.dmg ? `受到 ${e.dmg} 點傷害` : "小黃鴨擋下了這一擊", e.status || "答錯了");
       const hint = e.status === "Time Limit Exceeded" ? "（超時：想想能不能少一層迴圈）" : e.status === "Runtime Error" ? "（執行錯誤：檢查索引和空輸入）" : "";
       sayLine("hit", hint);
     } else if (e.kind === "win") {
       confetti();
+      setMood("happy");
       toast("win", `擊敗「${e.title}」！`, `經驗 +${e.xp}　金幣 +${e.gold}`);
       sayLine("win");
       setTimeout(() => maybeAd(true), 9000);
@@ -316,18 +365,25 @@ function handleEvents(evts) {
       say("撤退也是一種戰術，下次再來。");
     } else if (e.kind === "dead") {
       hitFx();
+      setMood("worried", 8000);
       sayLine("dead", `（留下 <em>${e.shards}</em> 顆結晶）`);
     } else if (e.kind === "won") {
       confetti(200);
+      setMood("happy", 8000);
       sayLine("won", `（帶回 <em>${e.shards}</em> 顆結晶）`);
     } else if (e.kind === "bounty") {
       confetti();
+      setMood("happy");
       toast("win", `賞金達成：${e.title}`, `額外經驗 +${e.xp}　結晶 +${e.shards}`);
       sayLine("bounty");
     } else if (e.kind === "login") {
       confetti(60);
       toast("win", `登入成功：${e.user}`, "現在可以試招、出招、同步官網進度了");
       sayLine("login");
+    } else if (e.kind === "bond") {
+      const c = COMP[e.pid] || {};
+      toast("win", `與${c.name || "夥伴"}的羈絆提升到 Lv${e.level}`, e.story ? `解鎖新劇情：${e.story.title}（設定 → 看板娘圖鑑）` : "");
+      if (e.story) { setMood("happy"); say(`欸嘿……有一段故事，想說給你聽。<button class="btn ghost" data-story="${esc(e.pid)}:${e.story.level}" style="padding:1px 10px">聽她說</button>`); }
     } else if (e.kind === "bountyAccepted") {
       toast("info", "賞金任務已接下", "解題檔已在 VS Code 開啟，解完就能領雙倍經驗");
     }
@@ -406,6 +462,7 @@ function renderHome() {
   const bounties = Object.entries(S.meta.bounties);
   const run = S.run;
   el.innerHTML = `
+    ${updateBanner()}
     ${S.login ? "" : `<div class="notice">還沒登入 LeetCode：試招可以先在本地跑，<b>出招和同步</b>需要登入。到 <button class="btn ghost" data-go="settings" style="padding:2px 10px">設定 → 帳號</button> 按「用瀏覽器登入」，在官網登入就好，不用把密碼給遊戲。</div>`}
     <div class="panel">
       <div class="eyebrow">今日委託 · Daily Quests</div>
@@ -467,6 +524,25 @@ const NODE_STYLE = {
   boss: { g: "王", fill: "#4a1410", stroke: "#ff8a7a", color: "#ffd9d2" },
 };
 
+function ruleHTML(cur) {
+  if (!cur || !cur.rule) return "";
+  const r = S.meta.rules[cur.rule];
+  const desc = r.desc.replace("{lang}", (S.meta.langNames || {})[cur.rule_lang] || cur.rule_lang || "");
+  return `<div class="boss-rule"><b>Boss 規則・${esc(r.name)}</b><span>${esc(desc)}</span></div>`;
+}
+function skillHTML(run) {
+  const sk = S.meta.skills[run.skill] || S.meta.skills.p0;
+  const cur = run.current;
+  let why = "";
+  if (run.skill_used) why = "這局已經用過了";
+  else if (run.status !== "active") why = "遠征已結束";
+  else if (sk.when !== "any" && !cur) why = "要在戰鬥中才能用";
+  else if (sk.when === "pick" && cur && cur.chosen) why = "要在選題之前用";
+  else if (sk.when === "fight" && cur && cur.type !== "fight") why = "只能用在普通戰鬥";
+  return `<div class="skill ${run.skill_used ? "used" : ""}"><div><span class="eyebrow">流派技能 · 一局一次</span><b>${esc(sk.name)}</b><span class="muted">${esc(sk.desc)}</span></div>
+    <button class="btn ${why ? "ghost" : "rune"}" data-run="skill" ${why ? `disabled title="${esc(why)}"` : ""}>${run.skill_used ? "已使用" : why ? esc(why) : "發動"}</button></div>`;
+}
+
 function renderRun() {
   const el = $("#tab-run");
   const run = S.run;
@@ -480,9 +556,10 @@ function renderRun() {
       <div><div class="eyebrow">${t === "boss" ? "Boss Battle" : t === "elite" ? "Elite Encounter" : "Encounter"}</div>
       <h2>${t === "boss" ? `Boss 現身！${cur.boss_tag ? `牠專攻你的弱點「${esc(nodeName(cur.boss_tag))}」` : ""}` : t === "elite" ? "精英怪擋住了去路" : "遇到怪物了"}</h2>
       <p class="muted" style="margin:0">從下面挑一隻來打。選了之後解題檔會自動在 VS Code 開啟。答錯一次扣 ${t === "boss" ? 22 : t === "elite" ? 16 : 10} HP。</p></div>
+      ${ruleHTML(cur)}
       <div class="quests">${cur.offers.map((q) => questCard(q, { choose: true, cls: `monster ${t}` })).join("")}</div>
       <div class="row">
-        <button class="btn" data-run="reroll">${run.relics.includes("lucky_cat") && !cur.rerolled ? "換一批題目（招財貓免費）" : "換一批題目（-5 HP）"}</button>
+        <button class="btn" data-run="reroll">${run.relics.includes("lucky_cat") && !cur.rerolled ? "換一批題目（招財貓免費）" : `換一批題目（-${(run.asc || 0) >= 9 ? 10 : 5} HP）`}</button>
         <button class="btn danger" data-run="flee">撤退</button>
       </div></div>`;
   } else if (cur && cur.chosen) {
@@ -495,9 +572,11 @@ function renderRun() {
         <div>
           <div class="eyebrow">${cur.type === "boss" ? "Boss" : cur.type === "elite" ? "Elite" : "Foe"} · 難度分 ${off.rating || "?"}</div>
           <h3>#${esc(ch.id || "")} ${esc(ch.title)}</h3>
-          <div class="row" style="margin-top:6px">${diffChip(ch.difficulty || off.difficulty)}${(off.tagNames || []).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}<span class="chip">已答錯 ${cur.wrong} 次</span></div>
+          <div class="row" style="margin-top:6px">${diffChip(ch.difficulty || off.difficulty)}${(off.tagNames || []).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}<span class="chip">已答錯 ${cur.wrong} 次</span>
+            ${cur.shield ? `<span class="chip lit">應援中：下次答錯不扣血</span>` : ""}${cur.frost ? `<span class="chip lit">冰霜試煉：經驗 ×2</span>` : ""}${cur.blitz ? `<span class="chip lit">鬥志全開</span>` : ""}${cur.free_hints ? `<span class="chip lit">提示前 2 階免費</span>` : ""}${cur.hint_level ? `<span class="chip">已開提示 ${cur.hint_level} 階</span>` : ""}</div>
         </div>
       </div>
+      ${ruleHTML(cur)}
       <div class="row">
         <button class="btn" data-view="${esc(cur.chosen)}">看題</button>
         <button class="btn" data-open="${esc(cur.chosen)}">在 VS Code 開檔</button>
@@ -512,14 +591,16 @@ function renderRun() {
     <div class="panel run-hud">
       <div style="display:grid;gap:8px;min-width:0">
         <div class="hpbar"><i style="width:${hpPct}%"></i><span>HP ${run.hp} / ${run.max_hp}</span></div>
-        <div class="relics">${run.relics.map((r) => `<span class="relic" title="${esc(S.relics[r].name)}：${esc(S.relics[r].desc)}">${esc(S.relics[r].glyph)}</span>`).join("") || `<span class="muted" style="font-size:12.5px">還沒有遺物。精英、寶箱、商店可以拿到。</span>`}</div>
+        <div class="relics">${run.relics.map((r) => { const x = S.relics[r] || { name: "失落的遺物", glyph: "？", desc: "來自已移除的資料包" }; return `<span class="relic" title="${esc(x.name)}：${esc(x.desc)}">${esc(x.glyph)}</span>`; }).join("") || `<span class="muted" style="font-size:12.5px">還沒有遺物。精英、寶箱、商店可以拿到。</span>`}</div>
+        ${(run.synergies || []).length ? `<div class="row">${run.synergies.map((id) => { const sy = S.meta.synergies.find((x) => x.id === id); return sy ? `<span class="chip lit" title="${esc(sy.desc)}">組合技・${esc(sy.name)}</span>` : ""; }).join("")}</div>` : ""}
       </div>
       <div style="display:grid;gap:6px;justify-items:end">
         <span class="gold"><span class="coin"></span>${run.gold}</span>
-        <span class="muted" style="font-size:12px">第 ${run.cleared.length} 層 · 擊殺 ${run.kills} · 遠征經驗 ${run.xp}</span>
+        <span class="muted" style="font-size:12px">${run.asc ? `<b style="color:#ff8a7a">飛升 ${run.asc}</b> · ` : ""}${run.daily ? "每日挑戰 · " : ""}第 ${run.cleared.length} 層 · 擊殺 ${run.kills} · 遠征經驗 ${run.xp}</span>
         ${run.status === "active" ? `<button class="btn ghost danger" data-run="abandon" style="padding:3px 10px;font-size:12px">放棄遠征</button>` : ""}
       </div>
     </div>
+    ${run.status === "active" ? `<div class="panel">${skillHTML(run)}</div>` : ""}
     ${battle}
     <div class="panel">
       <div class="row" style="justify-content:space-between;margin-bottom:10px">
@@ -543,6 +624,26 @@ function renderRun() {
   }
 }
 
+function updateBanner() {
+  const u = S.update;
+  if (!u) return "";
+  let dismissed = "";
+  try { dismissed = localStorage.getItem("dismissUpdate") || ""; } catch (e) {}
+  if (dismissed === u.published) return "";
+  return `<div class="notice update" role="status"><b>有新版本了</b>${esc(u.name || "")}（${esc((u.published || "").slice(0, 10))} 發佈）
+    <a class="btn primary" href="${esc(u.url)}" target="_blank" rel="noopener" style="padding:2px 12px">下載新版</a>
+    <button class="btn ghost" data-dismissupdate="${esc(u.published)}" style="padding:2px 12px">先不要</button></div>`;
+}
+
+async function showReport() {
+  let r;
+  try { r = await api("/api/report", { extra: lastBug }); } catch (e) { return toast("info", "產生不了報告", e.message); }
+  overlay("reportModal", `<div class="eyebrow">Bug Report · 錯誤報告</div><h2>錯誤報告</h2>
+    <p class="muted" style="margin:0">登入資訊、帳號名稱和電腦上的路徑都已經遮掉了，報告不會自動上傳。複製後貼到 GitHub 的 Issue 裡，就能幫我們找出問題。</p>
+    <textarea class="tc report-text" readonly>${esc(r.text)}</textarea>
+    <div class="row"><button class="btn primary" data-copyreport>複製</button><a class="btn" href="${esc(r.issues)}" target="_blank" rel="noopener">到 GitHub 回報</a><button class="btn ghost" data-reportclose>關閉</button></div>`, "錯誤報告");
+}
+
 function dailyPanel() {
   const dl = S.meta.daily;
   if (!dl) return "";
@@ -554,6 +655,36 @@ function dailyPanel() {
       ${best ? `<div class="daily-best"><span class="muted">今天最好的成績</span><code>${esc(best.code)}</code><button class="btn ghost" data-copy="${esc(best.code)}" style="padding:2px 12px">複製</button><span class="muted">共挑戰 ${best.tries} 次</span></div>` : ""}
       <button class="btn rune" data-run="daily">${best ? "再挑戰一次" : "開始今天的每日挑戰"}</button>
       ${dl.recent.length ? `<details style="margin-top:10px"><summary class="muted" style="cursor:pointer">最近的成績</summary><div class="history">${dl.recent.map((d) => `<div><span class="${d.won ? "w" : "l"}">${d.won ? "征服" : "倒下"}</span><span class="mono">${esc(d.day)}</span><span>${d.floors} 層</span><span>${d.minutes} 分鐘</span><code class="muted">${esc(d.code)}</code></div>`).join("")}</div></details>` : ""}
+    </div>`;
+}
+
+let selAsc = 0;
+try { selAsc = +localStorage.getItem("asc") || 0; } catch (e) {}
+function ascPicker() {
+  const a = S.meta.ascension;
+  if (!a || !a.max) return `<p class="muted" style="font-size:12.5px;margin:0 0 12px">征服一次地城就會解鎖「飛升」：更難的地城，更多結晶。</p>`;
+  selAsc = Math.min(selAsc, a.max);
+  const sk = S.meta.skills[(S.persona || "p0")] || S.meta.skills.p0;
+  return `<div class="asc">
+      <label class="field" style="max-width:240px;margin:0">飛升等級<select id="ascPick">
+        ${Array.from({ length: a.max + 1 }, (_, i) => `<option value="${i}" ${i === selAsc ? "selected" : ""}>${i ? `飛升 ${i}` : "一般難度"}</option>`).join("")}
+      </select></label>
+      ${selAsc ? `<ul class="asc-list">${a.levels.filter((l) => l.level <= selAsc).map((l) => `<li><b>${l.level}・${esc(l.name)}</b>${esc(l.desc)}</li>`).join("")}</ul>
+        <p class="muted" style="font-size:12.5px;margin:0">結晶 +${selAsc * 10}%。征服後解鎖下一級（最高 10）。</p>` : ""}
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">這局的流派技能：<b style="color:var(--parch)">${esc(sk.name)}</b>（${esc(sk.desc)}）</p>`;
+}
+function synergyDex() {
+  const list = S.meta.synergies || [];
+  if (!list.length) return "";
+  const seen = list.filter((x) => x.seen).length;
+  return `<div class="panel">
+      <div class="eyebrow">Synergies · 組合技圖鑑 ${seen} / ${list.length}</div>
+      <h2>遺物組合技</h2>
+      <p class="muted" style="margin:4px 0 12px">兩件特定的遺物湊在一起，會觸發額外效果。發動過一次就會記在圖鑑裡。</p>
+      <div class="syn-grid">${list.map((x) => x.seen
+        ? `<div class="syn"><b>${esc(x.name)}</b><span class="syn-relics">${x.relics.map((r) => `<span class="relic" title="${esc((S.relics[r] || {}).name || r)}">${esc((S.relics[r] || {}).glyph || "？")}</span>`).join("＋")}</span><span class="muted">${esc(x.desc)}</span></div>`
+        : `<div class="syn unknown"><b>？？？</b><span class="syn-relics"><span class="relic">？</span>＋<span class="relic">？</span></span><span class="muted">還沒發現的組合</span></div>`).join("")}</div>
     </div>`;
 }
 
@@ -570,9 +701,11 @@ function runLobby() {
         <li><b>寶箱、篝火、商店、神秘事件</b>：拿遺物、回血、花金幣。</li>
         <li>Boss 會從你<b>最弱的已解鎖技能</b>出題。HP 歸零就結束，但會留下<b>結晶</b>買永久強化。</li>
       </ul>
-      <button class="btn primary" data-run="start">開始第 ${S.meta.runs + 1} 次遠征</button>
+      ${ascPicker()}
+      <button class="btn primary" data-run="start">開始第 ${S.meta.runs + 1} 次遠征${selAsc ? `（飛升 ${selAsc}）` : ""}</button>
     </div>
     ${dailyPanel()}
+    ${synergyDex()}
     <div class="panel">
       <div class="eyebrow">Soul Forge · 結晶 ${S.player.shards}</div>
       <h2>永久強化</h2>
@@ -688,7 +821,27 @@ function nodeInfo() {
     ${n.parents.length ? `<div class="row" style="margin-bottom:10px"><span class="muted">前置：</span>${n.parents.map((p) => `<button class="chip" data-node="${esc(p)}">${esc(nodeName(p))}</button>`).join("")}</div>` : ""}
     ${!n.unlocked ? `<div class="notice" style="margin-bottom:10px">先點亮前置技能。這裡解的題目會先記著，前置點亮的瞬間一起燃起來。</div>` : ""}
     <div class="eyebrow" style="margin-bottom:8px">推薦修練</div>
-    ${recs ? (recs.length ? `<div class="quests">${recs.map((q) => questCard(q)).join("")}</div>` : `<div class="empty">這個技能的題目都解完了！</div>`) : `<div class="empty">載入推薦中…</div>`}`;
+    ${recs ? (recs.length ? `<div class="quests">${recs.map((q) => questCard(q)).join("")}</div>` : `<div class="empty">這個技能的題目都解完了！</div>`) : `<div class="empty">載入推薦中…</div>`}
+    ${tplSection(n)}`;
+}
+
+const treeLang = () => (S.lang === "cpp" ? "cpp" : "python3");
+function tplSection(n) {
+  const lang = treeLang(), list = tplCache[lang];
+  if (!list) {
+    loadTemplates(lang).then(() => { if (tab === "tree" && selNode === n.id) $("#nodeInfo").innerHTML = nodeInfo(); });
+    return "";
+  }
+  const t = list.find((x) => x.tags.includes(n.id));
+  if (!t) return "";
+  if (!t.unlocked) {
+    return `<div class="eyebrow" style="margin:16px 0 8px">技能模板</div>
+      <div class="tpl locked"><b>🔒 ${esc(t.title)}</b><span class="muted">點亮「${esc(n.name)}」就能解鎖，之後可以在題目頁的編輯器一鍵插入。</span></div>`;
+  }
+  return `<div class="eyebrow" style="margin:16px 0 8px">技能模板 · ${lang === "cpp" ? "C++" : "Python"}</div>
+    <div class="tpl"><div class="row" style="justify-content:space-between;align-items:center"><b>${esc(t.title)}</b>
+      <button class="btn ghost" data-copytpl="${esc(t.id)}" style="padding:2px 12px">複製</button></div>
+      <pre>${esc(t.code)}</pre></div>`;
 }
 
 async function selectNode(id) {
@@ -792,6 +945,7 @@ const ERR_HELP = {
   timeout: { title: "判題等太久了", btn: "sync" },
   login: { title: "需要登入 LeetCode", btn: "login" },
   code: { title: "程式碼還不能送", btn: "open" },
+  bug: { title: "遊戲出了一點錯（不是你的問題）", btn: "report" },
   other: { title: "沒有成功", btn: "retry" },
 };
 function errorBlock(slug, r) {
@@ -805,6 +959,7 @@ function errorBlock(slug, r) {
     sync: `<button class="btn primary" data-do="sync">同步官網進度</button><button class="btn" data-submit="${esc(slug)}">再出招一次</button>`,
     login: `<button class="btn primary" data-go="settings">到設定登入</button>`,
     open: `<button class="btn primary" data-open="${esc(slug)}">在 VS Code 開檔</button><button class="btn" data-${r.action === "submit" ? "submit" : "test"}="${esc(slug)}">存好了，再${verb}</button>`,
+    report: `<button class="btn primary" data-report>產生錯誤報告</button><button class="btn" data-${r.action === "submit" ? "submit" : "test"}="${esc(slug)}">再試一次</button>`,
   }[h.btn];
   return `<div class="errcard" role="alert"><b>${esc(h.title)}</b><p>${esc(main)}</p>
     ${tips.length ? `<ul>${tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
@@ -859,16 +1014,58 @@ function resultBlock(slug) {
   return `<div class="console">${lines.join("\n")}</div>`;
 }
 
+/* ================= 題目頁：題目敘述＋編輯器＋提示階梯 ================= */
+const ED = { cm: null, slug: null, file: "", mtime: null, lang: "python3", dirty: false, clean: "", conflict: false, poll: null, timer: null, codeLine: 0, note: "" };
+let showEditor = true;
+try { showEditor = localStorage.getItem("showEditor") !== "0"; } catch (e) {}
+const tplCache = {};
+const CM_MODE = { python3: "python", cpp: "text/x-c++src", c: "text/x-csrc", java: "text/x-java", csharp: "text/x-csharp", kotlin: "text/x-kotlin" };
+
+function probHeadHTML(slug, q, inBattle, bounty, solvedNow) {
+  return `<div class="prob-head">
+      <span class="mono muted">#${esc(q.id)}</span><h2>${esc(q.title)}</h2>${diffChip(q.difficulty)}
+      <span class="chip">難度分 ${q.rating}</span>${solvedNow ? `<span class="chip" style="color:var(--heal)">已解</span>` : ""}
+      ${inBattle ? `<span class="chip" style="color:#ff8a7a;border-color:#6d342d">戰鬥中</span>` : bounty ? `<span class="chip" style="color:var(--rune)">賞金 ×2</span>` : ""}
+    </div>
+    <div class="row">${(q.tags || []).map((t) => `<button class="chip" data-node-go="${esc(t)}">${esc(nodeName(t))}</button>`).join("")}
+      <a class="chip" href="${q.url}" target="_blank" rel="noopener">leetcode.com</a><a class="chip" href="${q.cnUrl}" target="_blank" rel="noopener">力扣中文</a></div>
+    <div class="row">
+      <button class="btn rune" data-test="${esc(slug)}" title="Ctrl+Enter">試招（範例測資）</button>
+      <button class="btn primary" data-submit="${esc(slug)}" title="Ctrl+Shift+Enter">出招（提交）</button>
+      <button class="btn" data-open="${esc(slug)}">在 VS Code 開檔</button>
+      <button class="btn ghost" data-edtoggle aria-pressed="${showEditor}">${showEditor ? "收起編輯器" : "打開編輯器"}</button>
+      ${!inBattle && !bounty && !solvedNow ? `<button class="btn ghost" data-bounty="${esc(slug)}">接賞金 ×2 XP</button>` : ""}
+    </div>`;
+}
+
+function hintHTML(slug, q) {
+  const lv = q.hintLevel || 0;
+  const items = (q.hints || []).map((h) => `<div class="hint"><b>第 ${h.level} 階・${esc(h.title)}</b>${h.pseudo ? `<pre>${esc(h.text)}</pre>` : `<p>${esc(h.text)}</p>`}</div>`).join("");
+  const next = lv < 3
+    ? `<button class="btn ghost" data-hint="${esc(slug)}">${lv ? `打開第 ${lv + 1} 階` : "卡住了？打開第 1 階提示"}</button><span class="muted" style="font-size:12px">每打開一階，這題的經驗和賞金 -15%${q.hintFree ? `（這場戰鬥前 ${q.hintFree} 階免費）` : ""}</span>`
+    : `<span class="muted" style="font-size:12.5px">提示都打開了。照著骨架自己寫一次，下次就不用看了。</span>`;
+  if (!lv) {
+    return `<div class="hints hints-closed"><span class="hints-label">提示階梯</span>
+      <button class="btn ghost" data-hint="${esc(slug)}">卡住了？打開第 1 階提示</button>
+      <span class="muted" style="font-size:12px">每打開一階，這題的經驗和賞金 -15%${q.hintFree ? `（這場戰鬥前 ${q.hintFree} 階免費）` : ""}</span></div>`;
+  }
+  return `<details class="hints" open>
+      <summary>提示階梯 <span class="mono">${lv}/3</span>${lv ? `<span class="muted">・獎勵 -${lv * 15}%</span>` : ""}</summary>
+      <div class="hint-body">${lv ? `<div class="muted" style="font-size:12.5px">${esc(compName())}：這些是這個技能的通用想法，不是這題的答案。</div>` : ""}${items}<div class="row" style="align-items:center">${next}</div></div>
+    </details>`;
+}
+
 async function renderProblem() {
   const el = $("#tab-problem");
   const slug = targetSlug();
   if (!slug) {
-    problemSig = "";
+    problemSig = ""; el.dataset.slug = "";
     el.innerHTML = `<div class="panel"><div class="eyebrow">Problem</div><h2>還沒選題目</h2><p class="muted">從酒館的今日委託、技能樹或遠征挑一題，題目就會出現在這裡。</p><div class="quests">${S.picks.map((q) => questCard(q)).join("")}</div></div>`;
     return;
   }
   const q = probCache[slug];
   if (!q) {
+    el.dataset.slug = "";
     el.innerHTML = `<div class="panel"><div class="empty">讀取題目中…</div></div>`;
     try { probCache[slug] = await api(`/api/problem?slug=${encodeURIComponent(slug)}`); }
     catch (e) { el.innerHTML = `<div class="panel"><div class="notice">讀不到題目：${esc(e.message)}</div><p><a href="${lcUrl(slug)}" target="_blank" rel="noopener">到 LeetCode 看題目</a></p></div>`; return; }
@@ -879,9 +1076,18 @@ async function renderProblem() {
   const inBattle = run && run.current && run.current.chosen === slug;
   const bounty = S.meta.bounties[slug];
   const solvedNow = S.recent.some((r) => r.slug === slug) || q.solved;
-  // 狀態沒變就不重畫（避免題目 iframe 一直重新載入）
-  const sig = [slug, inBattle, !!bounty, solvedNow, JSON.stringify(lastResult[slug] || null)].join("|");
-  if (sig === problemSig && el.querySelector("iframe")) return;
+  q.hintFree = inBattle && run.current.free_hints ? run.current.free_hints : 0;
+  const sig = [slug, inBattle, !!bounty, solvedNow, showEditor, q.hintLevel, q.hintFree, JSON.stringify(lastResult[slug] || null)].join("|");
+  if (el.dataset.slug === slug && el.querySelector("iframe")) {
+    // 同一題：只更新上方資訊、結果和提示，不動題目敘述和編輯器
+    if (sig !== problemSig) {
+      problemSig = sig;
+      $("#probHead").innerHTML = probHeadHTML(slug, q, inBattle, bounty, solvedNow);
+      $("#probResult").innerHTML = resultBlock(slug);
+      $("#probHint").innerHTML = hintHTML(slug, q);
+    }
+    return;
+  }
   problemSig = sig;
   const prevTc = $("#tc") ? $("#tc").value : null;
   const doc = `<!doctype html><meta charset="utf-8"><base target="_blank"><style>
@@ -891,28 +1097,201 @@ async function renderProblem() {
     pre code{background:none;padding:0;color:#c9d1e3} strong{color:#fff} a{color:#ffd27a}
     img{max-width:100%;height:auto;background:#fff;border-radius:6px} ul,ol{padding-left:22px}
   </style>${q.html}`;
+  el.dataset.slug = slug;
   el.innerHTML = `
     <div class="panel" style="display:grid;gap:12px">
-      <div class="prob-head">
-        <span class="mono muted">#${esc(q.id)}</span><h2>${esc(q.title)}</h2>${diffChip(q.difficulty)}
-        <span class="chip">難度分 ${q.rating}</span>${solvedNow ? `<span class="chip" style="color:var(--heal)">已解</span>` : ""}
-        ${inBattle ? `<span class="chip" style="color:#ff8a7a;border-color:#6d342d">戰鬥中</span>` : bounty ? `<span class="chip" style="color:var(--rune)">賞金 ×2</span>` : ""}
+      <div id="probHead" style="display:grid;gap:10px">${probHeadHTML(slug, q, inBattle, bounty, solvedNow)}</div>
+      <div id="probResult">${resultBlock(slug)}</div>
+      <div id="probHint">${hintHTML(slug, q)}</div>
+      <div class="prob-split ${showEditor ? "with-ed" : ""}">
+        <div class="prob-statement">
+          <iframe class="statement" sandbox="allow-popups allow-popups-to-escape-sandbox" title="題目敘述"></iframe>
+          <details><summary class="muted" style="cursor:pointer">自訂測資（試招用）</summary>
+            <textarea class="tc" id="tc" spellcheck="false" aria-label="自訂測資">${esc(prevTc ?? q.examples)}</textarea></details>
+        </div>
+        <div class="prob-editor" ${showEditor ? "" : "hidden"}>
+          <div class="ed-bar">
+            <span class="mono ed-file" id="edFile">讀取中…</span>
+            <span class="ed-status" id="edStatus"></span>
+            <span class="ed-tools">
+              <select id="tplPick" aria-label="插入模板"><option value="">插入模板…</option></select>
+              <button class="btn ghost" data-edsave>儲存</button>
+            </span>
+          </div>
+          <div id="edHost" class="ed-host"></div>
+          <div class="ed-keys muted">Ctrl+S 儲存（停手 1.5 秒也會自動存）・Ctrl+Enter 試招・Ctrl+Shift+Enter 出招・Ctrl+/ 註解。跟 VS Code 用同一個檔案，哪邊改都會同步。</div>
+        </div>
       </div>
-      <div class="row">${(q.tags || []).map((t) => `<button class="chip" data-node-go="${esc(t)}">${esc(nodeName(t))}</button>`).join("")}
-        <a class="chip" href="${q.url}" target="_blank" rel="noopener">leetcode.com</a><a class="chip" href="${q.cnUrl}" target="_blank" rel="noopener">力扣中文</a></div>
-      <div class="row">
-        <button class="btn" data-open="${esc(slug)}">在 VS Code 開檔</button>
-        <button class="btn rune" data-test="${esc(slug)}">試招（範例測資）</button>
-        <button class="btn primary" data-submit="${esc(slug)}">出招（提交）</button>
-        ${!inBattle && !bounty && !solvedNow ? `<button class="btn ghost" data-bounty="${esc(slug)}">接賞金 ×2 XP</button>` : ""}
-      </div>
-      ${resultBlock(slug)}
-      <iframe class="statement" sandbox="allow-popups allow-popups-to-escape-sandbox" title="題目敘述" style="height:62vh"></iframe>
-      <details><summary class="muted" style="cursor:pointer">自訂測資（試招用）</summary>
-        <textarea class="tc" id="tc" spellcheck="false" aria-label="自訂測資">${esc(prevTc ?? q.examples)}</textarea></details>
     </div>`;
   el.querySelector("iframe").srcdoc = doc;
+  if (showEditor) mountEditor(slug);
 }
+
+function edStatus(note) {
+  if (note !== undefined) ED.note = note;
+  const st = $("#edStatus");
+  if (!st) return;
+  if (ED.conflict) {
+    st.innerHTML = `<span class="bad">檔案在 VS Code（或別處）被改過了</span>
+      <button class="btn ghost" data-ed="theirs">用檔案的版本</button><button class="btn ghost" data-ed="mine">用這裡的版本覆蓋</button>`;
+  } else if (ED.dirty) st.innerHTML = `<span class="ed-dirty">● 還沒存</span>`;
+  else st.innerHTML = `<span class="muted">${esc(ED.note || "已儲存")}</span>`;
+}
+
+async function loadTemplates(lang) {
+  if (!tplCache[lang]) {
+    try { tplCache[lang] = (await api(`/api/templates?lang=${encodeURIComponent(lang)}`)).templates; } catch (e) { tplCache[lang] = []; }
+  }
+  return tplCache[lang];
+}
+
+async function fillTemplatePicker(slug) {
+  const sel = $("#tplPick");
+  if (!sel) return;
+  const list = await loadTemplates(ED.lang === "cpp" ? "cpp" : "python3");
+  const tags = (probCache[slug] && probCache[slug].tags) || [];
+  const rel = list.filter((t) => t.unlocked && t.tags.some((x) => tags.includes(x)));
+  const other = list.filter((t) => t.unlocked && !rel.includes(t));
+  const locked = list.filter((t) => !t.unlocked && t.present);
+  const opt = (t) => `<option value="${esc(t.id)}">${esc(t.skill)}：${esc(t.title)}</option>`;
+  sel.innerHTML = `<option value="">插入模板…</option>` +
+    (rel.length ? `<optgroup label="這題用得到">${rel.map(opt).join("")}</optgroup>` : "") +
+    (other.length ? `<optgroup label="已解鎖">${other.map(opt).join("")}</optgroup>` : "") +
+    (locked.length ? `<optgroup label="點亮技能後解鎖">${locked.map((t) => `<option disabled>🔒 ${esc(t.skill)}：${esc(t.title)}</option>`).join("")}</optgroup>` : "");
+}
+
+function insertTemplate(id) {
+  const list = tplCache[ED.lang === "cpp" ? "cpp" : "python3"] || [];
+  const t = list.find((x) => x.id === id && x.unlocked);
+  if (!t || !ED.cm) return;
+  // 插在「你的程式碼」最上面：Python 的 import、C++ 的輔助函式都要在 class 之前
+  const at = { line: ED.codeLine, ch: 0 };
+  ED.cm.replaceRange(t.code.replace(/\s+$/, "") + "\n\n", at);
+  ED.cm.setCursor({ line: ED.codeLine, ch: 0 });
+  ED.cm.focus();
+  toast("info", `插入了「${t.title}」`, "在你的程式碼最上面，可以直接呼叫");
+}
+
+async function mountEditor(slug) {
+  const host = $("#edHost");
+  if (!host) return;
+  if (ED.cm && ED.slug && ED.slug !== slug && ED.dirty) await saveEditor(true);
+  let r;
+  try { r = await api(`/api/code?slug=${encodeURIComponent(slug)}`); }
+  catch (e) { host.innerHTML = `<div class="notice">開不了解題檔：${esc(e.message)}</div>`; return; }
+  if (targetSlug() !== slug || !document.body.contains(host)) return;
+  Object.assign(ED, { slug, file: r.file, mtime: r.mtime, lang: r.lang, dirty: false, clean: r.text, conflict: false, codeLine: r.codeLine, note: "已載入" });
+  $("#edFile").textContent = r.file;
+  host.innerHTML = "";
+  if (!window.CodeMirror) {
+    host.innerHTML = `<textarea class="ed-fallback" spellcheck="false"></textarea>`;
+    const ta = host.firstChild;
+    ta.value = r.text;
+    ED.cm = { getValue: () => ta.value, setValue: (v) => (ta.value = v), on: (ev, fn) => ta.addEventListener(ev === "change" ? "input" : ev, fn),
+      refresh() {}, focus: () => ta.focus(), getCursor: () => 0, setCursor() {}, getScrollInfo: () => ({ left: 0, top: ta.scrollTop }), scrollTo: (l, t) => (ta.scrollTop = t),
+      replaceRange: (txt) => { ta.value = txt + ta.value; } };
+  } else {
+    ED.cm = CodeMirror(host, {
+      value: r.text, mode: CM_MODE[r.lang] || null, lineNumbers: true, indentUnit: 4, tabSize: 4, indentWithTabs: false,
+      matchBrackets: true, autoCloseBrackets: true, styleActiveLine: true, viewportMargin: 30,
+      extraKeys: {
+        "Ctrl-S": () => saveEditor(), "Cmd-S": () => saveEditor(),
+        "Ctrl-Enter": () => runTest(ED.slug), "Cmd-Enter": () => runTest(ED.slug),
+        "Shift-Ctrl-Enter": () => runSubmit(ED.slug), "Shift-Cmd-Enter": () => runSubmit(ED.slug),
+        "Ctrl-/": "toggleComment", "Cmd-/": "toggleComment",
+        Tab: (cm) => (cm.somethingSelected() ? cm.indentSelection("add") : cm.replaceSelection(" ".repeat(cm.getOption("indentUnit")), "end")),
+        "Shift-Tab": (cm) => cm.indentSelection("subtract"),
+      },
+    });
+    const line = Math.max(0, (r.cursorLine || r.codeLine + 1) - 1);
+    ED.cm.setCursor({ line, ch: ED.cm.getLine(line) ? ED.cm.getLine(line).length : 0 });
+    // 只捲編輯器自己，不要把整個頁面捲走
+    setTimeout(() => { ED.cm.refresh(); ED.cm.scrollTo(null, Math.max(0, ED.cm.heightAtLine(line, "local") - 120)); }, 30);
+  }
+  ED.cm.on("change", () => {
+    const d = ED.cm.getValue() !== ED.clean;
+    if (d !== ED.dirty) { ED.dirty = d; edStatus(); }
+    clearTimeout(ED.timer);
+    if (d) ED.timer = setTimeout(() => saveEditor(true), 1500); // 停手 1.5 秒自動存
+  });
+  edStatus();
+  fillTemplatePicker(slug);
+  clearInterval(ED.poll);
+  ED.poll = setInterval(pollEditor, 2000);
+}
+
+async function saveEditor(silent = false, force = false) {
+  if (!ED.cm || !ED.slug) return true;
+  if (!ED.dirty && !force) return true;
+  clearTimeout(ED.timer);
+  const text = ED.cm.getValue();
+  try {
+    const r = await api("/api/code/save", { slug: ED.slug, text, mtime: ED.mtime, force });
+    ED.mtime = r.mtime; ED.clean = text; ED.conflict = false;
+    ED.dirty = ED.cm.getValue() !== text;
+    edStatus(`已儲存 ${new Date().toTimeString().slice(0, 5)}`);
+    if (!silent) toast("info", "已存檔", r.file);
+    return true;
+  } catch (e) {
+    if (e.kind === "conflict") { ED.conflict = true; edStatus(); }
+    else if (!silent) toast("info", "存檔失敗", e.message);
+    return false;
+  }
+}
+
+async function reloadEditor(note) {
+  let r;
+  try { r = await api(`/api/code?slug=${encodeURIComponent(ED.slug)}`); } catch (e) { return; }
+  const cur = ED.cm.getCursor(), sc = ED.cm.getScrollInfo();
+  ED.clean = r.text; ED.mtime = r.mtime; ED.codeLine = r.codeLine;
+  ED.cm.setValue(r.text);
+  ED.cm.setCursor(cur); ED.cm.scrollTo(sc.left, sc.top);
+  ED.dirty = false; ED.conflict = false;
+  edStatus(note);
+}
+
+async function pollEditor() {
+  if (!ED.cm || tab !== "problem" || document.hidden || !document.body.contains($("#edHost"))) return;
+  let r;
+  try { r = await fetch(`/api/code/stat?slug=${encodeURIComponent(ED.slug)}`, { headers: { "X-Game-Token": TOKEN } }).then((x) => x.json()); } catch (e) { return; }
+  if (!r.mtime || r.mtime === ED.mtime) return;
+  if (!ED.dirty) reloadEditor("VS Code 改過，已同步");
+  else { ED.conflict = true; edStatus(); }
+}
+
+async function flushEditor(slug) {
+  // 試招／出招前：編輯器裡還沒存的先存起來
+  if (ED.cm && ED.slug === slug && (ED.dirty || ED.conflict)) {
+    if (ED.conflict) { toast("info", "先決定要用哪個版本", "檔案在別處被改過，看編輯器上方的按鈕"); return false; }
+    return saveEditor(true);
+  }
+  return true;
+}
+
+function toggleEditor() {
+  showEditor = !showEditor;
+  try { localStorage.setItem("showEditor", showEditor ? "1" : "0"); } catch (e) {}
+  const split = $(".prob-split"), pane = $(".prob-editor");
+  if (split) split.classList.toggle("with-ed", showEditor);
+  if (pane) pane.hidden = !showEditor;
+  if (showEditor) {
+    if (ED.cm && ED.slug === targetSlug() && $("#edHost").childElementCount) setTimeout(() => ED.cm.refresh(), 30);
+    else mountEditor(targetSlug());
+  } else saveEditor(true);
+  problemSig = "";
+  renderProblem();
+}
+
+async function openHint(slug) {
+  let r;
+  try { r = await api("/api/hint", { slug }); } catch (e) { return toast("info", "打不開提示", e.message); }
+  Object.assign(probCache[slug] || {}, { hintLevel: r.hintLevel, hints: r.hints });
+  problemSig = "";
+  renderProblem();
+  say(`${r.free && r.hintLevel <= r.free ? "這一階免費！" : ""}${["", "先看看這題牽涉哪些技能。", "抓住這個觀念，方向就對了。", "骨架給你了，細節要自己補上喔。"][r.hintLevel] || ""}`);
+}
+
+window.addEventListener("beforeunload", (e) => { if (ED.dirty) { saveEditor(true); e.preventDefault(); e.returnValue = ""; } });
 
 function targetSlug() {
   const run = S?.run;
@@ -953,6 +1332,7 @@ function renderModal() {
     html = `<div class="eyebrow">${r.won ? "Victory" : "Defeat"}</div>
       <h2>${r.won ? "征服了演算法地城！" : "遠征結束"}</h2>
       <div class="kv"><div><b>${r.floors}</b><span>走過的節點</span></div><div><b>${r.kills}</b><span>擊殺</span></div><div><b>${r.xp}</b><span>遠征經驗</span></div><div><b style="color:var(--violet)">${r.shards}</b><span>獲得結晶</span></div></div>
+      ${r.unlocked && r.unlocked > (r.asc || 0) ? `<div class="notice" style="border-color:#6b4e22">解鎖了「飛升 ${r.unlocked}」！下一局可以在遠征頁選擇更難的地城。</div>` : ""}
       ${r.code ? `<div class="daily-best"><span class="muted">每日挑戰成績碼</span><code>${esc(r.code)}</code><button class="btn ghost" data-copy="${esc(r.code)}" style="padding:2px 12px">複製</button></div>` : ""}
       <p class="muted" style="margin:0">結晶可以在遠征頁買永久強化，下一局會更強。</p>
       <button class="btn primary" data-run="clear">回到營地</button>`;
@@ -999,9 +1379,32 @@ function avatarPicker(p) {
   const up = p.uploads && p.uploads.avatar;
   return `<div class="avatars">
     ${AVATARS.map((a) => `<button class="av" data-avatar="${a.id}" aria-pressed="${p.avatar === a.id}">${avatarSVG(a.id)}<span>${esc(a.name)}</span><small>${esc((COMP[a.id] || {}).title || "")}</small></button>`).join("")}
+    ${Object.values(COMP).filter((c) => c.mod).map((c) => `<button class="av" data-avatar="${esc(c.id)}" aria-pressed="${p.avatar === c.id}">${avatarSVG(c.id)}<span>${esc(c.name)}</span><small>資料包・${esc(c.title)}</small></button>`).join("")}
     ${up ? `<button class="av" data-avatar="upload" aria-pressed="${p.avatar === "upload"}"><img src="/user-asset/avatar?v=${esc(up.split("v=")[1] || "1")}" alt=""><span>我的圖片</span></button>` : ""}
     <label class="av up" role="button" tabindex="0"><span>＋</span><span>上傳圖片</span><input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-upload="avatar" hidden></label>
   </div>`;
+}
+
+function bondHTML(pid) {
+  const b = (S.bond || {})[pid];
+  if (!b) return "";
+  const pct = b.level >= b.max ? 100 : Math.round((b.into / b.per) * 100);
+  return `<div class="bond">
+      <div class="bond-head"><span class="heart" aria-hidden="true">♥</span><b>羈絆 Lv${b.level}</b><span class="bond-bar"><i style="width:${pct}%"></i></span>
+        <span class="muted mono" style="font-size:11.5px">${b.level >= b.max ? "MAX" : `${b.into}/${b.per}`}</span></div>
+      <div class="bond-stories">${b.stories.map((st) => st.unlocked
+        ? `<button class="chip lit" data-story="${esc(pid)}:${st.level}">Lv${st.level}・${esc(st.title)}</button>`
+        : `<span class="chip dim-chip">Lv${st.level} 解鎖</span>`).join("")}</div>
+    </div>`;
+}
+async function openStory(key) {
+  const [pid, lv] = key.split(":");
+  let r;
+  try { r = await api("/api/story", { pid, level: +lv }); } catch (e) { return toast("info", "還不能看", e.message); }
+  overlay("storyModal", `<div class="eyebrow">羈絆劇情 · Lv${r.level}</div>
+    <div class="story-who"><span class="persona-av">${avatarSVG(pid, "happy")}</span><div><b>${esc(r.title)}</b><span class="muted">${esc(r.who)}</span></div></div>
+    <div class="story-text">${r.text.split("\n").map((l) => `<p>${esc(l)}</p>`).join("")}</div>
+    <div class="row"><button class="btn primary" data-storyclose>闔上</button></div>`, r.title);
 }
 
 function personaCard(withSelect = false) {
@@ -1014,6 +1417,7 @@ function personaCard(withSelect = false) {
     <dl class="persona-dl">
       <dt>推薦風格</dt><dd>${esc(c.style || "")}</dd>
       <dt>特殊加成</dt><dd>${esc(c.perk || "")}</dd>
+      ${S && S.meta && S.meta.skills && S.meta.skills[(S && S.persona) || "p0"] ? `<dt>流派技能</dt><dd>${esc(S.meta.skills[S.persona || "p0"].name)}：${esc(S.meta.skills[S.persona || "p0"].desc)}</dd>` : ""}
     </dl>
     ${withSelect ? `<label class="field" style="max-width:320px">個性（決定推薦風格與台詞）<select id="pfPersona">${Object.values(COMP).map((x) => `<option value="${x.id}" ${x.id === pid ? "selected" : ""}>${esc(x.name)}・${esc(x.title)}</option>`).join("")}</select></label>
       <p class="muted" style="font-size:12px;margin:0">選內建頭像時，個性會跟著換成那位角色；上傳自己的圖片時，可以在這裡另外選個性。</p>` : ""}
@@ -1071,7 +1475,7 @@ async function startBrowserLogin() {
 function renderSettings() {
   const el = $("#tab-settings");
   const p = profile();
-  const sig = JSON.stringify([p, S.persona, S.login, S.lang, S.transport, S.testMode, S.vscodeInstalled, S.library.total]);
+  const sig = JSON.stringify([p, S.persona, S.login, S.lang, S.transport, S.testMode, S.vscodeInstalled, S.library.total, S.bond, S.checkUpdates]);
   if (sig === settingsSig && el.childElementCount) return;
   settingsSig = sig;
   el.innerHTML = `
@@ -1108,8 +1512,10 @@ function renderSettings() {
       <div class="dex">${Object.values(COMP).map((c) => `<div class="dex-card ${c.id === S.persona ? "on" : ""}">
           <div class="persona-head"><span class="persona-av">${avatarSVG(c.id)}</span><div><b>${esc(c.name)}</b><span class="persona-title">${esc(c.title)}</span></div></div>
           <p class="persona-intro">${esc(c.intro)}</p>
-          <dl class="persona-dl"><dt>推薦風格</dt><dd>${esc(c.style)}</dd><dt>特殊加成</dt><dd>${esc(c.perk)}</dd></dl>
+          <dl class="persona-dl"><dt>推薦風格</dt><dd>${esc(c.style)}</dd><dt>特殊加成</dt><dd>${esc(c.perk)}</dd>
+            ${(S.meta.skills || {})[c.skill || c.id] ? `<dt>流派技能</dt><dd>${esc(S.meta.skills[c.skill || c.id].name)}：${esc(S.meta.skills[c.skill || c.id].desc)}</dd>` : ""}</dl>
           <p class="dex-quote">「${esc(((c.lines || {}).greet || [""])[0].replace("{name}", (S.profile && S.profile.name) || "獵題人"))}」</p>
+          ${bondHTML(c.id)}
           ${c.id === S.persona ? `<span class="chip" style="justify-self:start;color:var(--ember-hot);border-color:#6b4e22">目前的夥伴</span>` : `<button class="btn" data-avatar="${c.id}" style="justify-self:start">選她當夥伴</button>`}
         </div>`).join("")}</div>
     </div>
@@ -1144,6 +1550,13 @@ function renderSettings() {
       </div>
     </div>
     <div class="panel">
+      <div class="eyebrow">Mods · 資料包</div>
+      <h2>資料包</h2>
+      <p class="muted" style="margin:4px 0 10px">把別人做的（或你自己做的）資料包放進工作區的 <span class="mono">mods</span> 資料夾，就能新增看板娘、遺物、神秘事件和組合技。資料包只有資料、不會執行程式。格式說明在 <a href="https://github.com/OwenWu930302/happy-leetcode-dungeon/blob/main/docs/MODS.md" target="_blank" rel="noopener">docs/MODS.md</a>。</p>
+      <div id="modSlot">${modCache ? modHTML(modCache) : `<div class="muted">讀取中…</div>`}</div>
+      <div class="row" style="margin-top:10px"><button class="btn" data-mods="reload">重新載入</button><button class="btn ghost" data-mods="open">開啟 mods 資料夾</button></div>
+    </div>
+    <div class="panel">
       <div class="eyebrow">Backups · 存檔快照</div>
       <h2>存檔備份</h2>
       <p class="muted" style="margin:4px 0 10px">每天第一次開遊戲會自動備份紀錄、遊戲存檔、錯題本和解題檔，保留最近 14 份。還原前會先把現在的進度再備份一次，按錯了也救得回來。</p>
@@ -1155,6 +1568,11 @@ function renderSettings() {
       <h2>工作區</h2>
       <p class="muted" style="margin:4px 0 8px">你的解題檔、紀錄、遊戲存檔和登入資訊都在這個資料夾，每個玩家各自一份。</p>
       <div class="path">${esc(S.workspace)}</div>
+      <div class="row" style="margin-top:10px;align-items:center;font-size:13px">
+        <span class="muted">版本：<span class="mono">${esc((S.version || {}).label || "")}</span></span>
+        ${(S.version || {}).frozen ? `<label class="check"><input type="checkbox" id="pfUpdates" ${S.checkUpdates ? "checked" : ""}> 啟動時檢查新版本</label>` : ""}
+        <button class="btn ghost" data-report style="padding:2px 12px">產生錯誤報告</button>
+      </div>
       <div class="row" style="margin-top:10px">
         <button class="btn" data-ws>在 VS Code 開啟工作區</button>
         <button class="btn ${S.vscodeInstalled ? "ghost" : "rune"}" data-vscode>${S.vscodeInstalled ? "重新安裝 VS Code 任務" : "安裝 VS Code 任務（Ctrl+Shift+B 提交）"}</button>
@@ -1163,9 +1581,27 @@ function renderSettings() {
     </div>`;
   if (!envCache) loadEnv();
   loadBackups();
+  if (!modCache) loadMods();
 }
 
-let envCache = null, backupCache = null;
+let envCache = null, backupCache = null, modCache = null;
+function modHTML(list) {
+  if (!list.length) return `<p class="muted" style="margin:0">還沒有資料包。</p>`;
+  return `<div class="mods">${list.map((m) => m.ok
+    ? `<div class="mod ok"><b>${esc(m.name)}</b><span class="muted">v${esc(m.version)}${m.author ? `・${esc(m.author)}` : ""}</span>
+        <span class="muted" style="font-size:12.5px">${[["companions", "位看板娘"], ["relics", "件遺物"], ["events", "個事件"], ["synergies", "個組合技"]].filter(([k]) => m.counts[k]).map(([k, w]) => `${m.counts[k]} ${w}`).join("・")}</span>
+        ${m.description ? `<span style="font-size:13px">${esc(m.description)}</span>` : ""}</div>`
+    : `<div class="mod bad"><b>${esc(m.file)}：有錯，沒有載入</b><ul>${m.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`).join("")}</div>`;
+}
+async function loadMods(reload = false) {
+  let r;
+  try { r = await api("/api/mods", reload ? { reload: true } : {}); } catch (e) { return toast("info", "讀不到資料包", e.message); }
+  modCache = r.mods;
+  COMP = Object.fromEntries(r.companions.map((c) => [c.id, c]));
+  const el = $("#modSlot");
+  if (el) el.innerHTML = modHTML(modCache);
+  if (reload) { applyState(r); settingsSig = ""; render(); toast("info", "資料包重新載入了", `${modCache.filter((m) => m.ok).length} 個成功、${modCache.filter((m) => !m.ok).length} 個有錯`); }
+}
 function envHTML(checks) {
   return `<ul class="envlist">${checks.map((c) => `<li class="${c.ok ? "ok" : c.need ? "bad" : "warn"}">
       <span class="env-ic" aria-hidden="true">${c.ok ? "✔" : c.need ? "✘" : "！"}</span>
@@ -1256,6 +1692,7 @@ function failCard(slug, action, e) {
 }
 
 async function runTest(slug) {
+  if (!(await flushEditor(slug))) return;
   const tc = $("#tc") && targetSlug() === slug ? $("#tc").value : null;
   busy(true, "試招中…（不會扣血）", true);
   try {
@@ -1265,6 +1702,7 @@ async function runTest(slug) {
     const ok = x.local ? x.status_msg === "Accepted"
       : x.status_msg === "Accepted" && JSON.stringify(x.code_answer) === JSON.stringify(x.expected_code_answer);
     sayLine(ok ? "testOk" : "testFail");
+    setMood(ok ? "happy" : "worried", 3500);
     const label = x.local ? (LOCAL_LABEL[x.status_msg] || x.status_msg) : (x.status_msg || "沒過");
     toast(ok ? "win" : x.status_msg === "Finished" ? "info" : "hit", ok ? "範例測資全對" : `試招：${label}`, x.local ? `本地試跑 ${x.elapsed_ms} ms` : "");
     if (tab !== "problem") setFocus(slug);
@@ -1275,6 +1713,7 @@ async function runTest(slug) {
 }
 
 async function runSubmit(slug) {
+  if (!(await flushEditor(slug))) return;
   busy(true, "出招！", true);
   try {
     const st = await api("/api/submit", { slug });
@@ -1438,6 +1877,7 @@ async function drawShare(kind, report) {
   try {
     img = prof.avatar === "upload" && prof.uploads && prof.uploads.avatar
       ? await loadImg(`/user-asset/avatar?v=${encodeURIComponent(prof.uploads.avatar.split("v=")[1] || "1")}`)
+      : COMP[prof.avatar] && COMP[prof.avatar].image ? await loadImg(COMP[prof.avatar].image)
       : await loadImg("data:image/svg+xml;charset=utf-8," + encodeURIComponent(avatarSVG(prof.avatar).replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" width="520" height="520" ')));
   } catch (e) { img = null; }
   g.save(); g.beginPath(); g.arc(200, 220, 128, 0, Math.PI * 2); g.closePath();
@@ -1532,6 +1972,11 @@ document.addEventListener("click", async (ev) => {
   if (!t || t.disabled) return;
   const d = t.dataset;
   if (d.go) return setTab(d.go);
+  if (d.edtoggle !== undefined) return toggleEditor();
+  if (d.edsave !== undefined) return saveEditor();
+  if (d.ed === "theirs") return reloadEditor("改用檔案的版本");
+  if (d.ed === "mine") { await saveEditor(false, true); return; }
+  if (d.hint) return openHint(d.hint);
   if (d.jweek) { journalWeek = d.jweek; journal = null; return renderJournal(); }
   if (d.mfilter) { mistakeFilter = d.mfilter; journalSig = ""; return renderJournal(); }
   if (d.mdel) {
@@ -1540,9 +1985,26 @@ document.addEventListener("click", async (ev) => {
     return;
   }
   if (d.share) return shareCard(d.share);
+  if (d.story) return openStory(d.story);
+  if (d.mods === "reload") return loadMods(true);
+  if (d.report !== undefined) return showReport();
+  if (d.reportclose !== undefined) return closeOverlay("reportModal");
+  if (d.copyreport !== undefined) {
+    const ta = document.querySelector(".report-text");
+    try { await navigator.clipboard.writeText(ta.value); toast("win", "已複製錯誤報告"); } catch (e) { ta.select(); toast("info", "請按 Ctrl+C 複製"); }
+    return;
+  }
+  if (d.dismissupdate) { try { localStorage.setItem("dismissUpdate", d.dismissupdate); } catch (e) {} return render(); }
+  if (d.mods === "open") { const r = await act("/api/mods/open", {}); if (r) toast("info", "開啟資料包資料夾", r.path); return; }
+  if (d.storyclose !== undefined) return closeOverlay("storyModal");
   if (d.sharecopy !== undefined) return copyShare();
   if (d.shareclose !== undefined) return closeOverlay("shareModal");
   if (d.wk) { closeOverlay("wkModal"); if (d.wk === "journal") setTab("journal"); return; }
+  if (d.copytpl) {
+    const t = (tplCache[treeLang()] || []).find((x) => x.id === d.copytpl);
+    if (t) { try { await navigator.clipboard.writeText(t.code); toast("win", "模板已複製", t.title); } catch (e) { toast("info", "沒辦法自動複製", "請手動選取"); } }
+    return;
+  }
   if (d.copy) {
     try { await navigator.clipboard.writeText(d.copy); toast("win", "已複製", d.copy); } catch (e) { toast("info", "沒辦法自動複製", d.copy); }
     return;
@@ -1565,7 +2027,10 @@ document.addEventListener("click", async (ev) => {
   }
   if (d.run) {
     if (d.run === "abandon" && !t.dataset.armed) { t.dataset.armed = "1"; t.textContent = "再按一次確認放棄"; setTimeout(() => { delete t.dataset.armed; t.textContent = "放棄遠征"; }, 3500); return; }
-    const st = d.run === "daily" ? await act("/api/run/start", { daily: true }) : await act(`/api/run/${d.run}`, {});
+    const st = d.run === "daily" ? await act("/api/run/start", { daily: true })
+      : d.run === "start" ? await act("/api/run/start", { asc: selAsc })
+      : await act(`/api/run/${d.run}`, {});
+    if (st && d.run === "skill") { toast("win", "技能發動！", (S.meta.skills[S.run.skill] || {}).name || ""); confetti(40); }
     if (st && d.run === "start") say("地城生成好了！從最下面挑一個入口。");
     if (st && d.run === "daily") say("今天的每日挑戰！這張地圖大家都一樣，看誰走得遠～");
     if (st && d.run === "clear") setTab("run");
@@ -1630,6 +2095,9 @@ document.addEventListener("click", async (ev) => {
 document.addEventListener("change", async (ev) => {
   const t = ev.target;
   if (t.matches("input[data-upload]")) return uploadFile(t);
+  if (t.id === "pfUpdates") { await act("/api/profile", { checkUpdates: t.checked }); return; }
+  if (t.id === "ascPick") { selAsc = +t.value; try { localStorage.setItem("asc", selAsc); } catch (e) {} return renderRun(); }
+  if (t.id === "tplPick") { if (t.value) insertTemplate(t.value); t.value = ""; return; }
   if (t.dataset && t.dataset.mcause) {
     try { Object.assign(journal, await api("/api/mistake/tag", { id: t.dataset.mcause, cause: t.value })); journalSig = ""; renderJournal(); toast("info", t.value ? `標成「${t.value}」` : "清掉錯因"); }
     catch (e) { toast("info", "沒標成功", e.message); }
@@ -1703,7 +2171,8 @@ async function poll() {
 
 (async function boot() {
   try {
-    const cj = await fetch("companions.json").then((r) => r.json());
+    let cj;
+    try { cj = await api("/api/companions"); } catch (e) { cj = await fetch("companions.json").then((r) => r.json()); }
     COMP = Object.fromEntries(cj.companions.map((c) => [c.id, c]));
   } catch (e) { /* 角色資料讀不到就用預設台詞 */ }
   try {

@@ -1,0 +1,1 @@
+CodeMirror 5.65.18 (MIT) — https://codemirror.net/5/ — lib/codemirror.js, lib/codemirror.css, 以及 mode/python、mode/clike、addon/edit/matchbrackets、addon/edit/closebrackets、addon/selection/active-line、addon/comment/comment 合併成 addons.js

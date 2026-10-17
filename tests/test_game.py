@@ -162,3 +162,133 @@ class MistakeAndWeeklyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def make_ctx(lang="python3"):
+    recs = fake_records(20, seed=9)
+    tree = engine.build_tree(PROBLEMS, recs)
+    return {"problems": PROBLEMS, "records": recs, "tree": tree, "power": engine.compute_power(PROBLEMS, recs),
+            "mode": "balanced", "lang": lang}
+
+
+def fight_ready(save, ctx, kind="fight"):
+    """把目前的遠征直接放進一場指定種類的戰鬥（測試用）。"""
+    run = save["run"]
+    offers, tag = rogue._offers(run, ctx, kind)
+    run["pos"] = "test"
+    run["current"] = {"key": "test", "type": kind, "offers": offers, "chosen": None, "started_at": None,
+                      "seen": [], "wrong": 0, "rerolled": False, "boss_tag": tag}
+    return run["current"]
+
+
+class RunDepthTests(unittest.TestCase):
+    def setUp(self):
+        self.ctx = make_ctx()
+        self.save = rogue.new_save()
+
+    def tearDown(self):
+        rogue.MOD_RELICS.clear()
+        rogue.MOD_SYNERGIES.clear()
+
+    def attempt(self, slug, ok, lang="python3", sid=1, at=None):
+        return {slug: {"attempts": [{"time": at or rogue.NOW(), "accepted": ok, "status": "Accepted" if ok else "Wrong Answer",
+                                     "submission_id": sid, "lang": lang}], "solved": ok}}
+
+    def test_skill_once_and_rules(self):
+        run = rogue.start_run(self.save, seed=3, persona="p2")
+        run["hp"] = 20
+        rogue.use_skill(self.save, self.ctx)
+        self.assertEqual(run["hp"], 35)  # 25% of 60
+        with self.assertRaises(ValueError):
+            rogue.use_skill(self.save, self.ctx)
+
+    def test_moon_step_only_in_normal_fight(self):
+        rogue.start_run(self.save, seed=4, persona="p5")
+        with self.assertRaises(ValueError):
+            rogue.use_skill(self.save, self.ctx)  # 不在戰鬥中
+        fight_ready(self.save, self.ctx, "elite")
+        with self.assertRaises(ValueError):
+            rogue.use_skill(self.save, self.ctx)
+        fight_ready(self.save, self.ctx, "fight")
+        rogue.use_skill(self.save, self.ctx)
+        self.assertIsNone(self.save["run"]["current"])
+
+    def test_cheer_blocks_next_hit(self):
+        rogue.start_run(self.save, seed=5, persona="p1")
+        cur = fight_ready(self.save, self.ctx)
+        slug = cur["offers"][0]["slug"]
+        rogue.choose(self.save, slug)
+        rogue.use_skill(self.save, self.ctx)
+        hp = self.save["run"]["hp"]
+        ev = rogue.resolve(self.save, self.attempt(slug, False), {})
+        self.assertEqual(ev[0]["dmg"], 0)
+        self.assertEqual(self.save["run"]["hp"], hp)
+
+    def test_boss_language_seal(self):
+        rogue.start_run(self.save, seed=6)
+        run = self.save["run"]
+        cur = fight_ready(self.save, self.ctx, "boss")
+        cur.update(rule="lang", rule_lang="cpp")
+        slug = cur["offers"][0]["slug"]
+        rogue.choose(self.save, slug)
+        ev = rogue.resolve(self.save, self.attempt(slug, True, lang="python3"), {})
+        self.assertEqual(ev[0]["kind"], "hit")
+        self.assertIn("語言封印", ev[0]["status"])
+        self.assertEqual(run["status"], "active")
+        ev = rogue.resolve(self.save, {slug: {"attempts": [
+            {"time": rogue.NOW(), "accepted": True, "submission_id": 2, "lang": "cpp"}], "solved": True}}, {})
+        self.assertEqual(ev[-1]["kind"], "won")
+
+    def test_boss_rule_is_chosen_on_enter(self):
+        rogue.start_run(self.save, seed=7)
+        run = self.save["run"]
+        boss_key = "boss"
+        run["map"]["edges"].append(["here", boss_key])
+        run["pos"] = "here"
+        rogue.enter(self.save, boss_key, self.ctx)
+        self.assertIn(run["current"]["rule"], rogue.BOSS_RULES)
+
+    def test_ascension_unlock_and_penalties(self):
+        with self.assertRaises(ValueError):
+            rogue.start_run(self.save, asc=1)
+        self.save["meta"]["asc_max"] = 2
+        run = rogue.start_run(self.save, seed=8, asc=2)
+        self.assertEqual(run["max_hp"], 50)
+        rogue._finish(self.save, won=True)
+        self.assertEqual(self.save["meta"]["asc_max"], 3)
+        daily = rogue.start_run(self.save, daily="2026-10-17", asc=2)
+        self.assertEqual(daily["asc"], 0, "每日挑戰固定一般難度")
+
+    def test_synergy_and_shop_price(self):
+        run = rogue.start_run(self.save, seed=9)
+        rogue._add_relic(run, "rubber_duck")
+        self.assertEqual(rogue.active_synergies(run), [])
+        rogue._add_relic(run, "debugger")
+        self.assertIn("debug_duo", rogue.active_synergies(run))
+        cur = fight_ready(self.save, self.ctx)
+        cur["wrong"] = 1  # 小黃鴨只擋第一次
+        self.assertEqual(rogue._damage(run, cur), round(10 * 0.7 * 0.8))
+        self.assertEqual(rogue._price(run, 100), 100)
+        rogue._add_relic(run, "golden_keyboard")
+        rogue._add_relic(run, "lucky_cat")
+        self.assertEqual(rogue._price(run, 100), 80)
+
+    def test_mod_relic_effect(self):
+        rogue.MOD_RELICS["mod:sword"] = {"name": "劍", "glyph": "劍", "desc": "經驗 ×2", "effect": {"xp_mult": 2.0}}
+        run = rogue.start_run(self.save, seed=10)
+        cur = fight_ready(self.save, self.ctx)
+        problem = {"title": "x", "difficulty": "Easy", "tags": []}
+        base = rogue._win(self.save, dict(cur), problem)[0]["xp"]
+        run["relics"].append("mod:sword")
+        cur = fight_ready(self.save, self.ctx)
+        self.assertEqual(rogue._win(self.save, cur, problem)[0]["xp"], base * 2)
+
+    def test_hint_penalty(self):
+        rogue.start_run(self.save, seed=11)
+        cur = fight_ready(self.save, self.ctx)
+        slug = cur["offers"][0]["slug"]
+        rogue.choose(self.save, slug)
+        rogue.note_hint(self.save, slug, 2)
+        problem = {"title": "x", "difficulty": "Medium", "tags": []}
+        xp = rogue._win(self.save, cur, problem)[0]["xp"]
+        self.assertEqual(xp, round(engine.DIFF_XP["Medium"] * 0.7))

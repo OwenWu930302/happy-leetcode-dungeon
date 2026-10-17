@@ -22,16 +22,18 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import lc  # noqa: E402
-from game import backup, browser_login, engine, localrun, mistakes, rogue, weekly  # noqa: E402
+from game import (backup, bond, browser_login, engine, hints, localrun, mistakes, mods, report,  # noqa: E402
+                  rogue, templates, update, weekly)
 
 STATIC = lc.APP_DIR / "game" / "static"
 SAVE_PATH = lc.DATA_DIR / "game.json"
@@ -40,7 +42,39 @@ ASSET_DIR = lc.ROOT / "assets"
 MAX_UPLOAD = 6 * 1024 * 1024
 IMAGE_MAGIC = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpg", b"GIF8": "gif", b"RIFF": "webp"}
 BACKGROUNDS = ["dungeon", "starry", "sakura", "abyss", "ember", "forest", "plain"]
-COMPANIONS = {c["id"]: c for c in json.loads((STATIC / "companions.json").read_text(encoding="utf-8"))["companions"]}
+BASE_COMPANIONS = {c["id"]: c for c in json.loads((STATIC / "companions.json").read_text(encoding="utf-8"))["companions"]}
+COMPANIONS = dict(BASE_COMPANIONS)   # 內建＋資料包的看板娘
+MODS = {"mods": [], "companions": [], "dir": "", "folders": {}}
+BUILD = update.build_info(lc.APP_DIR, lc.FROZEN)
+
+
+def version_label():
+    if BUILD.get("built"):
+        return f"{BUILD.get('ref') or '自行打包'} · {BUILD.get('short') or '?'} · {BUILD['built'][:10]}"
+    return "原始碼版"
+
+
+def report_text(extra=""):
+    cfg, prof = lc.load_config(), load_profile()
+    return report.build(version_label(), extra, secrets=(cfg.get("session"), cfg.get("csrftoken")),
+                        names=(prof.get("lcUser"), prof.get("name")),
+                        paths=((str(lc.ROOT), "<工作區>"), (str(Path.home()), "~")))
+
+
+def reload_mods():
+    """重新讀取工作區 mods/ 裡的資料包。"""
+    global MODS
+    MODS = mods.load_all(lc.ROOT)
+    COMPANIONS.clear()
+    COMPANIONS.update(BASE_COMPANIONS)
+    COMPANIONS.update({c["id"]: c for c in MODS["companions"]})
+    return MODS
+
+
+def companion_skill(prof=None):
+    """這位看板娘的流派技能（資料包角色可以指定沿用哪一招）。"""
+    pid = persona_of(prof or load_profile())
+    return (COMPANIONS.get(pid) or {}).get("skill") or pid
 
 
 def persona_of(prof):
@@ -140,11 +174,12 @@ def context(problems, records):
     if not engine.RATINGS:
         engine.set_ratings(lc.load_ratings())
     engine.set_mistakes(mistakes.open_by_slug(mistakes.load(lc.DATA_DIR)))
+    hints.set_problems(problems)
     tree = engine.build_tree(problems, records)
     power = engine.compute_power(problems, records, contest=lc.load_json(lc.DATA_DIR / "contest.json", None))
     st = strategy()
     return {"problems": problems, "records": records, "tree": tree, "power": power,
-            "mode": st["mode"], "strategy": st}
+            "mode": st["mode"], "strategy": st, "lang": lc.default_lang()}
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +309,9 @@ def build_state(save, events=None):
     events = list(events or [])
     events += rogue.resolve(save, records, by_slug)
     events += rogue.resolve_bounties(save, records)
-    if events:
+    before = json.dumps(save["meta"].get("bond")), save["meta"].get("bond_since")
+    events += bond.scan(save, records, persona_of(load_profile()), events, STATIC)
+    if events or before != (json.dumps(save["meta"].get("bond")), save["meta"].get("bond_since")):
         write_save(save)
 
     power = ctx["power"]
@@ -291,6 +328,7 @@ def build_state(save, events=None):
     if run:
         run_view = dict(run)
         run_view["moves"] = rogue.moves(run)
+        run_view["synergies"] = rogue.active_synergies(run)
         cur = run.get("current")
         if cur and cur.get("chosen") and cur["chosen"] in by_slug:
             run_view["chosen"] = problem_brief(by_slug[cur["chosen"]], records)
@@ -314,11 +352,18 @@ def build_state(save, events=None):
         "run": run_view,
         "meta": {"upgrades": rogue.public_upgrades(save), "history": save["meta"]["history"],
                  "bounties": save["meta"]["bounties"], "runs": save["meta"].get("runs_started", 0),
+                 "skills": rogue.public_skills(), "rules": rogue.public_rules(),
+                 "ascension": rogue.public_ascension(save), "synergies": rogue.public_synergies(save),
+                 "langNames": rogue.LANG_NAMES,
                  "daily": {"today": date.today().isoformat(),
                            "best": (save["meta"].get("daily") or {}).get(date.today().isoformat()),
                            "recent": sorted((save["meta"].get("daily") or {}).values(),
                                             key=lambda d: d["day"], reverse=True)[:7]}},
         "weeklyPending": save["meta"].get("weekly_seen") != weekly.week_key(),
+        "version": {"label": version_label(), "frozen": lc.FROZEN},
+        "checkUpdates": lc.load_config().get("checkUpdates", True),
+        "update": update.STATE["available"] if lc.load_config().get("checkUpdates", True) else None,
+        "bond": bond.public(save, COMPANIONS, STATIC),
         "mistakesOpen": sum(mistakes.open_by_slug(mistakes.load(lc.DATA_DIR)).values()),
         "relics": rogue.public_relics(),
         "nodeTypes": {k: v["name"] for k, v in rogue.NODE_TYPES.items()},
@@ -375,6 +420,12 @@ def api(path, body, query):
     if path == "/api/relay/status":  # 出招時會一直拿著 LOCK，這個查詢要能同時回應
         relay = lc._RELAY
         return relay.status() if relay else {"needsUser": False, "ready": False}
+    if path == "/api/code/stat":  # 編輯器每兩秒問一次檔案有沒有在 VS Code 被改過
+        p = find((query.get("slug") or [""])[0])
+        f = lc.solution_path(p)
+        return {"mtime": str(f.stat().st_mtime_ns) if f.exists() else None}
+    if path == "/api/companions":
+        return {"companions": list(COMPANIONS.values())}
     if path == "/api/progress":  # 同上：出招進度（送出中／判題中）
         pr = lc.PROGRESS
         relay = lc._RELAY
@@ -397,7 +448,7 @@ def api(path, body, query):
                 av = str(body["avatar"])
                 if av == "upload" and not prof["uploads"].get("avatar"):
                     raise ValueError("還沒有上傳頭像")
-                if av != "upload" and not re.fullmatch(r"p\d{1,2}", av):
+                if av != "upload" and av not in COMPANIONS:
                     raise ValueError("沒有這個頭像")
                 prof["avatar"] = av
             if "bg" in body:
@@ -420,6 +471,10 @@ def api(path, body, query):
                     raise ValueError("沒有這種提交方式")
                 cfg = lc.load_config()
                 cfg["transport"] = body["transport"]
+                lc.save_json(lc.CONFIG_PATH, cfg)
+            if "checkUpdates" in body:
+                cfg = lc.load_config()
+                cfg["checkUpdates"] = bool(body["checkUpdates"])
                 lc.save_json(lc.CONFIG_PATH, cfg)
             if "testMode" in body:
                 if body["testMode"] not in ("auto", "local", "online"):
@@ -527,6 +582,32 @@ def api(path, body, query):
             items = mistakes.load(lc.DATA_DIR)
             return {"mistakes": mistakes.public(items), "summary": mistakes.summary(items)}
 
+        if path == "/api/mods":
+            if body.get("reload"):
+                reload_mods()
+            return {"mods": MODS["mods"], "dir": str(mods.mods_dir(lc.ROOT)),
+                    "companions": list(COMPANIONS.values()), **build_state(save)}
+
+        if path == "/api/report":
+            return {"text": report_text(str(body.get("extra", ""))[:4000]),
+                    "issues": f"https://github.com/{update.REPO}/issues/new?template=bug_report.yml"}
+
+        if path == "/api/mods/open":
+            d = mods.mods_dir(lc.ROOT)
+            d.mkdir(parents=True, exist_ok=True)
+            readme = d / "說明.txt"
+            if not readme.exists():
+                readme.write_text("把資料包放在這個資料夾：\n"
+                                  "  單一檔案：mods/我的資料包.json\n"
+                                  "  有圖片：mods/我的資料包/mod.json（圖片放同一個資料夾）\n\n"
+                                  "格式說明：https://github.com/OwenWu930302/happy-leetcode-dungeon/blob/main/docs/MODS.md\n"
+                                  "放好之後，在遊戲的「設定 → 資料包」按「重新載入」。\n", encoding="utf-8")
+            how = open_in_editor(d)
+            if how == "none" and os.name == "nt":
+                os.startfile(str(d))  # type: ignore[attr-defined]
+                how = "explorer"
+            return {"opened": how, "path": str(d)}
+
         if path == "/api/workspace/open":
             how = open_in_editor(lc.ROOT)
             if how == "none" and os.name == "nt":
@@ -544,12 +625,68 @@ def api(path, body, query):
             q = lc.fetch_question_detail(p["slug"])
             snippet = lc.get_python_snippet(q)
             warm_relay()
+            level = (save["meta"].get("hints") or {}).get(p["slug"], 0)
             return {
                 **problem_brief(p, records), "html": q.get("content") or "",
                 "examples": q.get("exampleTestcases") or "", "snippet": snippet,
+                "hintLevel": level, "hints": hints.ladder(p, tag_names(), level),
                 "url": f"{lc.BASE}/problems/{p['slug']}/",
                 "cnUrl": f"https://leetcode.cn/problems/{p['slug']}/",
             }
+
+        if path == "/api/story":
+            pid = str(body.get("pid", ""))
+            if pid not in COMPANIONS:
+                raise ValueError("沒有這位看板娘")
+            s = bond.read_story(save, pid, int(body.get("level", 0)), STATIC)
+            name = load_profile().get("name") or "獵題人"
+            return {"title": s["title"], "level": s["level"], "text": s["text"].replace("{name}", name),
+                    "pid": pid, "who": COMPANIONS[pid]["name"]}
+
+        if path == "/api/hint":
+            p = find(body["slug"])
+            hl = save["meta"].setdefault("hints", {})
+            level = min(hints.MAX_LEVEL, hl.get(p["slug"], 0) + 1)
+            hl[p["slug"]] = level
+            rogue.note_hint(save, p["slug"], level)
+            write_save(save)
+            cur = (save.get("run") or {}).get("current") or {}
+            free = cur.get("free_hints", 0) if cur.get("chosen") == p["slug"] else 0
+            return {"hintLevel": level, "hints": hints.ladder(p, tag_names(), level),
+                    "penalty": max(0, level - free) * hints.PENALTY, "free": free}
+
+        if path == "/api/templates":
+            ctx = context(problems, records)
+            lang = (query.get("lang") or [None])[0] or lc.default_lang()
+            return {"templates": templates.listing(ctx["tree"]["nodes"], lang), "lang": lang}
+
+        if path == "/api/code":
+            p = find((query.get("slug") or [body.get("slug", "")])[0])
+            fpath, _ = lc.create_solution(p)
+            raw = fpath.read_bytes().decode("utf-8")
+            lang = next((k for k, v in lc.LANGS.items() if fpath.suffix == v[0]), "python3")
+            return {"file": fpath.name, "text": raw.replace("\r\n", "\n"), "mtime": str(fpath.stat().st_mtime_ns),
+                    "lang": lang, "codeLine": lc.solution_offset(fpath), "cursorLine": code_line(fpath),
+                    "crlf": "\r\n" in raw}
+
+        if path == "/api/code/save":
+            p = find(body["slug"])
+            fpath = lc.solution_path(p)
+            text = str(body.get("text", ""))
+            if len(text) > 400_000:
+                raise ValueError("檔案太大了")
+            if fpath.exists():
+                cur_raw = fpath.read_bytes().decode("utf-8")
+                changed = str(fpath.stat().st_mtime_ns) != str(body.get("mtime"))
+                if changed and not body.get("force") and cur_raw.replace("\r\n", "\n") != text:
+                    raise ConflictError("這個檔案在 VS Code（或別的地方）被改過了。")
+                if "\r\n" in cur_raw:
+                    text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+            fpath.parent.mkdir(parents=True, exist_ok=True)
+            tmp = fpath.with_name(fpath.name + ".saving")
+            tmp.write_bytes(text.encode("utf-8"))
+            tmp.replace(fpath)
+            return {"mtime": str(fpath.stat().st_mtime_ns), "file": fpath.name}
 
         if path == "/api/open":
             p = find(body["slug"])
@@ -623,7 +760,10 @@ def api(path, body, query):
                 if save.get("run") and save["run"]["status"] == "active":
                     raise ValueError("遠征還在進行中")
                 rogue.start_run(save, persona=persona_of(load_profile()),
-                                daily=date.today().isoformat() if body.get("daily") else None)
+                                daily=date.today().isoformat() if body.get("daily") else None,
+                                asc=int(body.get("asc") or 0), skill=companion_skill())
+            elif path == "/api/run/skill":
+                events = rogue.use_skill(save, ctx)
             elif path == "/api/run/enter":
                 events = rogue.enter(save, body["key"], ctx)
             elif path == "/api/run/choose":
@@ -649,6 +789,14 @@ def api(path, body, query):
             return build_state(save, events)
 
         raise LookupError("沒有這個 API")
+
+
+class ConflictError(Exception):
+    kind = "conflict"
+
+
+def tag_names():
+    return {t: info[0] for t, info in engine.TAG_INFO.items()}
 
 
 def slim(res):
@@ -702,6 +850,12 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path.startswith("/user-asset/"):
             return self._asset(u.path.rsplit("/", 1)[-1])
+        if u.path.startswith("/mod-asset/"):
+            parts = u.path.split("/", 3)
+            f = mods.asset_path(MODS, parts[2], unquote(parts[3])) if len(parts) == 4 else None
+            if not f:
+                return self._send(404, {"error": "找不到"})
+            return self._send(200, f.read_bytes(), mods.IMAGE_EXT[f.suffix.lower()])
         if not u.path.startswith("/api/"):
             return self._static("index.html" if u.path in ("/", "") else u.path.lstrip("/"))
         if self.headers.get("X-Game-Token") != TOKEN:
@@ -717,7 +871,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._send(200, api(u.path, body, parse_qs(u.query)))
         except SystemExit as e:
+            report.LOG.warning("%s %s", u.path, str(e.code).strip().splitlines()[0][:200] if e.code else "")
             self._send(400, {"error": str(e.code).strip(), "kind": getattr(e, "kind", "other")})
+        except ConflictError as e:
+            self._send(409, {"error": str(e), "kind": "conflict"})
         except (ValueError, KeyError, IndexError) as e:
             self._send(400, {"error": str(e)})
         except LookupError as e:
@@ -726,7 +883,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(502, {"error": "❌ 連不到 LeetCode：網路斷了，或 LeetCode 暫時沒有回應。\n"
                                       f"   技術細節：{type(e).__name__}: {e}", "kind": "network"})
         except Exception as e:  # noqa: BLE001
-            self._send(500, {"error": f"{type(e).__name__}: {e}"})
+            report.LOG.error("%s 發生錯誤\n%s", u.path, traceback.format_exc())
+            self._send(500, {"error": f"遊戲出了一點錯（{type(e).__name__}: {e}）", "kind": "bug",
+                             "trace": traceback.format_exc()[-3000:]})
 
     def do_GET(self):
         self._handle("GET")
@@ -743,6 +902,13 @@ def _refresh_ratings():
 
 def serve(port=8765, open_browser=True):
     lc.ensure_home()
+    report.setup(lc.ROOT)
+    report.LOG.info("遊戲啟動：%s", version_label())
+    update.start(lambda url, timeout: lc.requests.get(url, timeout=timeout, headers={"Accept": "application/vnd.github+json"}),
+                 BUILD, lc.load_config().get("checkUpdates", True))
+    loaded = reload_mods()
+    for m in loaded["mods"]:
+        print(f"🧩 資料包 {m.get('name') or m['file']}：" + ("已載入" if m["ok"] else "有錯，沒有載入（到設定頁看原因）"))
     try:
         made = backup.daily(lc.ROOT)
         if made:

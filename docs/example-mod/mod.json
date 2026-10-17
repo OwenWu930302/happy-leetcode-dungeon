@@ -1,0 +1,59 @@
+{
+  "id": "example-pack",
+  "name": "範例資料包",
+  "version": "1.0",
+  "author": "LeetCode 演算法地城",
+  "description": "一位新看板娘、兩件遺物、一個神秘事件和一個組合技。照著改就能做出自己的資料包。",
+  "companions": [
+    {
+      "id": "pola",
+      "name": "珀拉",
+      "title": "迴圈工匠",
+      "intro": "在地城鐵匠鋪打造迴圈的工匠。她相信再複雜的問題，都能拆成一圈一圈的小步驟。",
+      "style": "均衡：跟露緹一樣補弱點，難度稍微保守一點",
+      "perk": "沒有特殊加成",
+      "skill": "p2",
+      "strategy": { "mode": "balanced", "offset": 40, "width": 170 },
+      "lines": {
+        "greet": ["{name}，今天要打造哪一圈？"],
+        "idle": ["先把一圈寫對，再想怎麼讓它轉得更快。"],
+        "testOk": ["每一圈都對上了，可以出招。"],
+        "testFail": ["有一圈跑歪了，把迴圈變數印出來看看。"],
+        "win": ["完美的作品！"],
+        "hit": ["再敲幾下就好了。"]
+      }
+    }
+  ],
+  "relics": [
+    {
+      "id": "anvil",
+      "name": "鐵砧",
+      "glyph": "砧",
+      "desc": "答錯受到的傷害 -15%。",
+      "effect": { "dmg_mult": 0.85 }
+    },
+    {
+      "id": "bellows",
+      "name": "風箱",
+      "glyph": "風",
+      "desc": "擊敗怪物時回復 3 HP，最大 HP +5。",
+      "effect": { "heal_on_win": 3, "max_hp": 5 }
+    }
+  ],
+  "events": [
+    {
+      "title": "鐵匠鋪的爐火",
+      "text": "珀拉讓你在爐火旁取暖，順便幫你磨亮了武器。",
+      "effects": { "heal": 10, "xp": 10 }
+    }
+  ],
+  "synergies": [
+    {
+      "id": "forge",
+      "name": "鍛造工坊",
+      "relics": ["anvil", "bellows"],
+      "desc": "遠征經驗 +15%。",
+      "effect": { "xp_mult": 1.15 }
+    }
+  ]
+}

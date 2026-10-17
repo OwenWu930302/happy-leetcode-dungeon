@@ -417,3 +417,99 @@ body[data-bg]{background-attachment:fixed}
 .overlay .modal-card{width:min(680px,100%)}
 .share-img{width:100%;height:auto;border-radius:12px;border:1px solid var(--line)}
 @media (max-width:560px){.seg button{padding:4px 10px}.mk>summary{padding:8px 10px}}
+
+/* ---------- 題目頁：題目＋編輯器 ---------- */
+.prob-split{display:grid;gap:12px}
+.prob-split.with-ed{grid-template-columns:minmax(0,1fr) minmax(0,1.15fr)}
+@media (max-width:1050px){.prob-split.with-ed{grid-template-columns:minmax(0,1fr)}}
+.prob-statement{display:grid;gap:8px;align-content:start;min-width:0}
+.prob-statement .statement{height:66vh}
+.prob-editor{display:grid;gap:6px;align-content:start;min-width:0}
+.ed-bar{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12.5px}
+.ed-file{color:var(--parch-dim)}
+.ed-status{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.ed-status .btn{padding:1px 10px;font-size:12px}
+.ed-status .bad{color:#ffb4a8}
+.ed-dirty{color:var(--ember-hot)}
+.ed-tools{margin-left:auto;display:flex;gap:6px;align-items:center}
+.ed-tools select{max-width:240px;background:#10131c;color:var(--parch);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font:inherit}
+.ed-tools .btn{padding:3px 12px}
+.ed-keys{font-size:11.5px}
+.ed-host{border:1px solid var(--line);border-radius:10px;overflow:hidden;min-height:200px}
+.ed-fallback{width:100%;height:66vh;background:#0b0d13;color:#d8dcec;border:0;padding:10px;font:13px/1.6 var(--f-mono);resize:vertical}
+.ed-host .CodeMirror{height:66vh;background:#0b0d13;color:#d8dcec;font:13px/1.6 var(--f-mono)}
+.ed-host .CodeMirror-gutters{background:#0e1119;border-right:1px solid #1f2533}
+.ed-host .CodeMirror-linenumber{color:#4c5468}
+.ed-host .CodeMirror-cursor{border-left:2px solid var(--ember-hot)}
+.ed-host .CodeMirror-activeline-background{background:#141927}
+.ed-host .CodeMirror-selected,.ed-host .CodeMirror-focused .CodeMirror-selected{background:#2a3350}
+.ed-host .CodeMirror-matchingbracket{color:var(--ember-hot)!important;text-decoration:underline}
+.ed-host .CodeMirror .cm-keyword{color:#c49bff} .ed-host .CodeMirror .cm-def{color:#ffd27a} .ed-host .CodeMirror .cm-variable-2{color:#9cd4e6}
+.ed-host .CodeMirror .cm-variable-3,.ed-host .CodeMirror .cm-type{color:#7fe0d4} .ed-host .CodeMirror .cm-builtin{color:#73bccd} .ed-host .CodeMirror .cm-string{color:#a6d98c}
+.ed-host .CodeMirror .cm-number{color:#f2a76b} .ed-host .CodeMirror .cm-comment{color:#6f7891;font-style:italic} .ed-host .CodeMirror .cm-meta{color:#e9ab47}
+.ed-host .CodeMirror .cm-operator{color:#d8dcec} .ed-host .CodeMirror .cm-property{color:#9cc4ff} .ed-host .CodeMirror .cm-atom{color:#f2a76b}
+
+/* ---------- 提示階梯 ---------- */
+.hints{border:1px solid #2e4a52;border-radius:10px;background:#0f1a1d}
+.hints>summary{cursor:pointer;padding:8px 12px;color:var(--rune);display:flex;gap:8px;align-items:baseline}
+.hint-body{display:grid;gap:8px;padding:0 12px 12px}
+.hint{display:grid;gap:4px}
+.hint b{color:var(--parch);font-size:13.5px}
+.hint p{margin:0;color:var(--parch-dim)}
+.hint pre{margin:0;padding:8px 12px;background:#090b10;border:1px solid var(--line);border-radius:8px;font:12.5px/1.65 var(--f-mono);white-space:pre-wrap;color:#c9d1e3}
+
+/* ---------- 技能模板 ---------- */
+.tpl{display:grid;gap:6px;padding:10px 12px;border-radius:10px;background:#10131c;border:1px solid var(--line)}
+.tpl.locked{border-style:dashed}
+.tpl pre{margin:0;padding:10px 12px;background:#090b10;border-radius:8px;font:12.5px/1.6 var(--f-mono);white-space:pre;overflow:auto;max-height:360px;color:#c9d1e3}
+
+/* ---------- 遠征：技能、Boss 規則、飛升、組合技 ---------- */
+.skill{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between}
+.skill>div{display:grid;gap:2px}
+.skill b{font-size:16px;color:var(--rune)}
+.skill.used b{color:var(--ash)}
+.skill .muted{font-size:12.5px}
+.boss-rule{display:grid;gap:2px;padding:10px 12px;border-radius:10px;background:#2a1414;border:1px solid #6d342d}
+.boss-rule b{color:#ffb4a8}
+.boss-rule span{color:var(--parch-dim);font-size:13px}
+.asc{display:grid;gap:8px;margin:0 0 10px}
+.asc-list{margin:0;padding-left:18px;display:grid;gap:2px;font-size:12.5px;color:var(--parch-dim)}
+.asc-list b{color:#ff8a7a;margin-right:6px;font-weight:600}
+.syn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.syn{display:grid;gap:4px;padding:10px 12px;border-radius:10px;background:#10131c;border:1px solid #6b4e22}
+.syn.unknown{border-style:dashed;border-color:var(--line)}
+.syn b{color:var(--ember-hot)} .syn.unknown b{color:var(--ash)}
+.syn .muted{font-size:12.5px}
+.syn-relics{display:flex;gap:6px;align-items:center;color:var(--ash)}
+
+/* ---------- 羈絆 ---------- */
+.bond{display:grid;gap:6px}
+.bond-head{display:flex;gap:8px;align-items:center}
+.bond .heart{color:#ff7fae}
+.bond b{font-size:13px}
+.bond-bar{flex:1;height:6px;border-radius:99px;background:#232a3c;overflow:hidden;min-width:60px}
+.bond-bar i{display:block;height:100%;background:linear-gradient(90deg,#ff7fae,#ffd27a)}
+.bond-stories{display:flex;flex-wrap:wrap;gap:6px}
+.story-who{display:flex;gap:12px;align-items:center}
+.story-who .persona-av{width:64px;height:64px}
+.story-who b{display:block;font-family:var(--f-display);font-size:20px}
+.story-text{display:grid;gap:10px;font-size:15px;line-height:1.9;color:var(--parch);max-height:55vh;overflow:auto;padding-right:4px}
+.story-text p{margin:0}
+
+/* ---------- 資料包 ---------- */
+.mods{display:grid;gap:8px}
+.mod{display:grid;gap:3px;padding:10px 12px;border-radius:10px;background:#10131c;border:1px solid var(--line)}
+.mod.ok b{color:var(--heal)}
+.mod.bad{border-color:#5a2f2a;background:#1f1716}
+.mod.bad b{color:#ffb4a8}
+.mod ul{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--parch-dim);display:grid;gap:2px}
+img.mod-av{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
+
+/* ---------- 新版提示、錯誤報告 ---------- */
+.notice.update{display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-color:#2e4a52;background:#0f1a1d}
+.notice.update b{color:var(--rune)}
+.report-text{height:260px;font-size:12px}
+label.check{display:inline-flex;gap:6px;align-items:center;cursor:pointer}
+.hints-closed{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:8px 12px}
+.hints-label{color:var(--rune)}
+.hints-closed .btn{padding:3px 12px}

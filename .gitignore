@@ -27,3 +27,6 @@ Thumbs.db
 
 # 下載或打包出來的執行檔
 *.exe
+
+# 打包時才產生的建置資訊
+game/build_info.json

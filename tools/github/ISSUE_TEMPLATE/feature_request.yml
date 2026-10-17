@@ -1,0 +1,22 @@
+name: 功能建議
+description: 想要新的玩法、介面或功能
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你的點子
+      description: 想要什麼？為什麼會讓刷題更好玩或更有效？
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: 大概怎麼運作（可以不填）
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: 確認
+      options:
+        - label: 這個點子不需要繞過 LeetCode 的安全機制，也不會大量抓取或重新發布題目內容
+          required: true
