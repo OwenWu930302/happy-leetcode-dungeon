@@ -148,20 +148,6 @@ def save_login(sess, csrf, user, avatar):
         save_profile(prof)
 
 
-def parse_cookie_paste(text):
-    """從玩家貼上的一段文字找出 LEETCODE_SESSION 與 csrftoken。
-
-    支援：瀏覽器的 cookie 字串（a=b; c=d）、開發者工具 Cookies 表格複製下來的列（名稱 Tab 值）、
-    「Copy as cURL」整段指令。只取這兩個值，其他內容不存。
-    """
-    out = {}
-    for name in ("LEETCODE_SESSION", "csrftoken"):
-        m = re.search(name + r"""["']?\s*(?:=|:|\t+|\s+)\s*["']?([A-Za-z0-9._\-]{10,})""", text)
-        if m:
-            out[name] = m.group(1)
-    return out
-
-
 def verify_login(session_cookie, csrftoken):
     """用 cookie 問 LeetCode「我是誰」。回傳 (username, avatar)，失敗丟 ValueError。"""
     s = lc.requests.Session()
@@ -539,12 +525,8 @@ def api(path, body, query):
         if path == "/api/login":
             sess = str(body.get("session", "")).strip().strip('"')
             csrf = str(body.get("csrftoken", "")).strip().strip('"')
-            if body.get("paste"):  # 一整段貼上（cookie 字串、開發者工具表格、cURL…）：自己找出兩個值
-                found = parse_cookie_paste(str(body["paste"]))
-                sess = sess or found.get("LEETCODE_SESSION", "")
-                csrf = csrf or found.get("csrftoken", "")
             if len(sess) < 20 or len(csrf) < 10:
-                raise ValueError("沒找到完整的 LEETCODE_SESSION 和 csrftoken，確認貼上的是登入後複製的內容")
+                raise ValueError("兩個欄位都要貼上完整的 cookie 值")
             user, avatar = verify_login(sess, csrf)
             save_login(sess, csrf, user, avatar)
             return build_state(save, [{"kind": "login", "user": user}])

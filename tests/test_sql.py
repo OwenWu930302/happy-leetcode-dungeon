@@ -145,19 +145,8 @@ class LoginErrorTests(unittest.TestCase):
             lc.DATA_DIR = saved
 
 
-class CookiePasteTests(unittest.TestCase):
-    """用平常的瀏覽器登入後，整段貼上也能找出兩個 cookie。"""
-
-    def test_parse_common_copy_formats(self):
-        from game.server import parse_cookie_paste
-        sess, csrf = "eyJ0eXAiOiJKV1Qi.payload_-1.sig", "AbCdEf0123456789xyz"
-        samples = [
-            f"Cookie: csrftoken={csrf}; LEETCODE_SESSION={sess}; other=1",
-            f"LEETCODE_SESSION\t{sess}\t.leetcode.com\t/\ncsrftoken\t{csrf}\tleetcode.com\t/",
-            f"curl 'https://leetcode.com/graphql/' -H 'cookie: csrftoken={csrf}; LEETCODE_SESSION={sess}'",
-        ]
-        for text in samples:
-            self.assertEqual(parse_cookie_paste(text), {"LEETCODE_SESSION": sess, "csrftoken": csrf}, text[:30])
+class RelayLoginTests(unittest.TestCase):
+    """代送試招／出招的瀏覽器要帶上遊戲存的登入資訊。"""
 
     def test_relay_gets_saved_login(self):
         tmp = Path(tempfile.mkdtemp())
