@@ -275,6 +275,9 @@ def get_relay():
         if not find_browser():
             return None
         _RELAY = BrowserRelay(ROOT / "browser-profile", BASE)
+    cfg = load_config()
+    sess, csrf = cfg.get("session") or "", cfg.get("csrftoken") or ""
+    _RELAY.auth = (sess, csrf) if sess and csrf and "貼上" not in sess else None
     return _RELAY
 
 

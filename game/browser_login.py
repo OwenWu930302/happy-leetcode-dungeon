@@ -448,6 +448,7 @@ class BrowserRelay:
         self.visible = False
         self.needs_user = False
         self.launched = False
+        self.auth = None  # (LEETCODE_SESSION, csrftoken)：遊戲存的登入資訊，送出前帶進瀏覽器
 
     # ---- 狀態（給遊戲畫面顯示「請在視窗裡完成驗證」）----
     def status(self):
@@ -533,6 +534,28 @@ class BrowserRelay:
                 pass
         threading.Thread(target=run, daemon=True).start()
 
+    def _sync_cookies(self):
+        """把遊戲存的登入 cookie 放進代送瀏覽器。
+
+        用「手動貼 cookie」登入，或代送瀏覽器自己的登入過期時，它送出的請求會是「沒登入」
+        （LeetCode 回 User is not authenticated）。這裡只放玩家自己的兩個 cookie，
+        跟玩家在這個瀏覽器裡登入的效果一樣；不碰 Cloudflare 的驗證。
+        """
+        if not self.auth or not self.page:
+            return
+        sess, csrf = self.auth
+        host = urlparse(self.base).hostname or "leetcode.com"
+        secure = self.base.startswith("https://")
+        try:
+            have = {c.get("name"): c.get("value") for c in
+                    self.page.call("Network.getCookies", {"urls": [self.base + "/"]}).get("cookies", [])}
+        except Exception:  # noqa: BLE001
+            have = {}
+        for name, value, http_only in (("LEETCODE_SESSION", sess, True), ("csrftoken", csrf, False)):
+            if value and have.get(name) != value:
+                self.page.call("Network.setCookie", {"name": name, "value": value, "domain": host, "path": "/",
+                                                     "secure": secure, "httpOnly": http_only})
+
     def request(self, method, path, payload=None, referer=None, wait=180):
         """回傳 (狀態碼, 內容文字, cf-mitigated)。"""
         with self.lock:
@@ -540,6 +563,7 @@ class BrowserRelay:
             self._connect(url)
             if not self._wait_ready(wait):
                 raise NeedsUser()
+            self._sync_cookies()
             expr = FETCH_JS % {
                 "method": json.dumps(method), "referer": json.dumps(url), "path": json.dumps(path),
                 "body": json.dumps(json.dumps(payload)) if payload is not None else "null",

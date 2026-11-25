@@ -124,5 +124,39 @@ class LoginErrorTests(unittest.TestCase):
             lc.DATA_DIR = saved
 
 
+class CookiePasteTests(unittest.TestCase):
+    """用平常的瀏覽器登入後，整段貼上也能找出兩個 cookie。"""
+
+    def test_parse_common_copy_formats(self):
+        from game.server import parse_cookie_paste
+        sess, csrf = "eyJ0eXAiOiJKV1Qi.payload_-1.sig", "AbCdEf0123456789xyz"
+        samples = [
+            f"Cookie: csrftoken={csrf}; LEETCODE_SESSION={sess}; other=1",
+            f"LEETCODE_SESSION\t{sess}\t.leetcode.com\t/\ncsrftoken\t{csrf}\tleetcode.com\t/",
+            f"curl 'https://leetcode.com/graphql/' -H 'cookie: csrftoken={csrf}; LEETCODE_SESSION={sess}'",
+        ]
+        for text in samples:
+            self.assertEqual(parse_cookie_paste(text), {"LEETCODE_SESSION": sess, "csrftoken": csrf}, text[:30])
+
+    def test_relay_gets_saved_login(self):
+        tmp = Path(tempfile.mkdtemp())
+        saved = (lc.CONFIG_PATH, lc._RELAY, lc.find_browser if hasattr(lc, "find_browser") else None)
+        try:
+            lc.CONFIG_PATH = tmp / "config.json"
+            lc.save_json(lc.CONFIG_PATH, {"session": "S" * 30, "csrftoken": "C" * 20})
+            from game import browser_login
+            real = browser_login.find_browser
+            browser_login.find_browser = lambda: "/usr/bin/true"
+            try:
+                lc._RELAY = None
+                relay = lc.get_relay()
+            finally:
+                browser_login.find_browser = real
+            self.assertEqual(relay.auth, ("S" * 30, "C" * 20))
+        finally:
+            lc.CONFIG_PATH, lc._RELAY = saved[0], saved[1]
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

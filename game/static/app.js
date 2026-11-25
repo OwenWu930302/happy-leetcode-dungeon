@@ -1427,14 +1427,17 @@ function personaCard(withSelect = false) {
 
 function loginForm() {
   const manual = `<ol class="steps">
-      <li>用瀏覽器登入 <a href="https://leetcode.com" target="_blank" rel="noopener">leetcode.com</a></li>
-      <li>按 <code>F12</code> → <b>Application（應用程式）</b> → 左邊 <b>Cookies</b> → <code>https://leetcode.com</code></li>
-      <li>複製 <code>LEETCODE_SESSION</code> 和 <code>csrftoken</code> 的 Value，貼到下面</li>
+      <li>用你平常的瀏覽器打開 <a href="https://leetcode.com" target="_blank" rel="noopener">leetcode.com</a>，正常登入</li>
+      <li>在 LeetCode 頁面按 <code>F12</code> → <b>Network（網路）</b>，再按 <code>F5</code> 重新整理</li>
+      <li>在清單點第一個 <code>leetcode.com</code> 的項目，按右鍵 → <b>Copy（複製）</b> → <b>Copy as cURL</b></li>
+      <li>整段貼到下面，按「驗證並登入」。遊戲只會取出 <code>LEETCODE_SESSION</code> 和 <code>csrftoken</code> 兩個值</li>
     </ol>
+    <label class="field" style="margin-top:10px">貼上整段內容（cURL、cookie 字串、或開發者工具複製的表格都可以）<textarea id="lcPaste" rows="4" autocomplete="off" spellcheck="false" style="font-family:var(--mono, monospace);font-size:12px" placeholder="curl 'https://leetcode.com/…' -H 'cookie: …'"></textarea></label>
+    <details style="margin-top:8px"><summary class="muted" style="cursor:pointer">或分別貼兩個值（F12 → Application → Cookies → https://leetcode.com）</summary>
     <div class="fields" style="margin-top:10px">
       <label class="field">LEETCODE_SESSION<input id="lcSession" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ0eXAiOiJKV1Qi…"></label>
       <label class="field">csrftoken<input id="lcCsrf" type="password" autocomplete="off" spellcheck="false" placeholder="一長串英數字"></label>
-    </div>
+    </div></details>
     <button class="btn" data-login style="margin-top:10px">驗證並登入</button>`;
   const viaBrowser = S && S.browserLogin;
   return `${viaBrowser ? `<div style="display:grid;gap:8px;margin-bottom:12px">
@@ -1442,7 +1445,7 @@ function loginForm() {
       <p class="muted" style="font-size:12.5px;margin:0">會開一個獨立的登入視窗，在裡面正常登入（email、GitHub、Google 都可以），完成後視窗會自動關閉。密碼是直接輸入給 LeetCode，遊戲碰不到。</p>
       <div class="blogin-status"></div>
     </div>` : ""}
-    <details ${viaBrowser ? "" : "open"}><summary class="muted" style="cursor:pointer;margin-bottom:8px">${viaBrowser ? "備案：手動貼 cookie" : "貼上 cookie 登入"}</summary>${manual}</details>
+    <details ${viaBrowser ? "" : "open"}><summary class="muted" style="cursor:pointer;margin-bottom:8px">${viaBrowser ? "登入視窗卡在 Cloudflare 驗證？改用平常的瀏覽器登入" : "用平常的瀏覽器登入"}</summary>${manual}</details>
     <p class="muted" style="font-size:12.5px;margin:8px 0 0">登入資訊只存在你電腦上的 <span class="mono">config.json</span>，不會上傳到任何地方。大約兩週會過期，到時候再按一次登入就好。</p>`;
 }
 
@@ -1468,7 +1471,7 @@ async function startBrowserLogin() {
       applyState(full);
     } else if (s2.state === "error") {
       bloginShow(`<div class="notice">${esc(s2.error)}</div>`);
-      say("登入沒有完成，可以再按一次，或改用手動貼 cookie。");
+      say("登入沒有完成。如果卡在 Cloudflare 驗證，展開下面的「改用平常的瀏覽器登入」，用你平常的瀏覽器登入再貼過來。");
     } else bloginShow("");
   }, 1500);
 }
@@ -1671,7 +1674,8 @@ async function uploadFile(input) {
 
 async function doLogin() {
   const session = ($("#lcSession") || {}).value || "", csrftoken = ($("#lcCsrf") || {}).value || "";
-  const st = await act("/api/login", { session, csrftoken }, "向 LeetCode 確認身分中…");
+  const paste = ($("#lcPaste") || {}).value || "";
+  const st = await act("/api/login", { session, csrftoken, paste }, "向 LeetCode 確認身分中…");
   if (st) { settingsSig = ""; modalKey = ""; render(); }
 }
 
