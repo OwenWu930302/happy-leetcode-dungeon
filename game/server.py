@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import lc  # noqa: E402
 from game import (backup, bond, browser_login, engine, hints, localrun, mistakes, mods, report,  # noqa: E402
-                  rogue, templates, update, weekly)
+                  rogue, sqllocal, templates, update, weekly)
 
 STATIC = lc.APP_DIR / "game" / "static"
 SAVE_PATH = lc.DATA_DIR / "game.json"
@@ -715,6 +715,20 @@ def api(path, body, query):
             finally:
                 lc.set_progress(None)
             return {"result": slim(res)}
+
+        if path in ("/api/sql/setup", "/api/sql/drop"):
+            # 本機 SQL 練習場：在自己電腦的 SQL Server 建出／刪掉這題的資料表
+            p = find(body["slug"])
+            if not lc.is_sql_problem(p):
+                raise ValueError("這題不是 SQL 題")
+            q = lc.fetch_question_detail(p["slug"])
+            server = lc.load_config().get("sqlServer")
+            try:
+                if path == "/api/sql/setup":
+                    return sqllocal.setup(q, server=server, case=int(body.get("case") or 0))
+                return sqllocal.drop(q, server=server)
+            except sqllocal.Unsupported as e:
+                raise ValueError(f"沒辦法在本機建資料表：{e}")
 
         if path == "/api/submit":
             p = find(body["slug"])

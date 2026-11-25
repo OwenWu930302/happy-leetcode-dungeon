@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: python -m pip install requests pyinstaller
+        run: python -m pip install requests pyodbc pyinstaller
 
       - name: Record build info
         run: python tools/build_info.py "${{ github.sha }}" "${{ github.ref_name }}"
@@ -38,6 +38,7 @@ jobs:
           --add-data "data\problems.json;data"
           --add-data "game\build_info.json;game"
           --collect-submodules game
+          --hidden-import pyodbc
           --exclude-module xhtml2pdf --exclude-module reportlab
           launcher.py
 

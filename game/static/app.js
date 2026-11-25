@@ -1036,7 +1036,12 @@ function probHeadHTML(slug, q, inBattle, bounty, solvedNow) {
       <button class="btn" data-open="${esc(slug)}">在 VS Code 開檔</button>
       <button class="btn ghost" data-edtoggle aria-pressed="${showEditor}">${showEditor ? "收起編輯器" : "打開編輯器"}</button>
       ${!inBattle && !bounty && !solvedNow ? `<button class="btn ghost" data-bounty="${esc(slug)}">接賞金 ×2 XP</button>` : ""}
-    </div>`;
+    </div>
+    ${(q.tags || []).includes("database") ? `<div class="row">
+      <span class="muted" style="font-size:12.5px">本機 SQL（LocalDB · LeetCodeLocal）</span>
+      <button class="btn ghost" data-sqlsetup="${esc(slug)}" title="照題目在你電腦的 SQL Server 建出資料表與範例資料">建立本機資料表</button>
+      <button class="btn ghost" data-sqldrop="${esc(slug)}">刪除本機資料表</button>
+    </div>` : ""}`;
 }
 
 function hintHTML(slug, q) {
@@ -2019,6 +2024,16 @@ document.addEventListener("click", async (ev) => {
   if (d.view) return viewProblem(d.view);
   if (d.open) return openFile(d.open);
   if (d.test) return runTest(d.test);
+  if (d.sqlsetup) {
+    const r = await act("/api/sql/setup", { slug: d.sqlsetup }, "在本機建立資料表…（第一次啟動 LocalDB 要等幾秒）");
+    if (r) toast("win", "本機資料表建好了", `${Object.entries(r.tables).map(([t, n]) => `${t}（${n} 列）`).join("、")}｜${r.server} → ${r.database}，可以在 VS Code 連過去自己查`);
+    return;
+  }
+  if (d.sqldrop) {
+    const r = await act("/api/sql/drop", { slug: d.sqldrop }, "刪除本機資料表…");
+    if (r) toast("info", "本機資料表已刪除", r.dropped.join("、") || "這題沒有資料表");
+    return;
+  }
   if (d.submit) return runSubmit(d.submit);
   if (d.bounty) { await act("/api/bounty", { slug: d.bounty }); setFocus(d.bounty); return render(); }
   if (d.choose) {

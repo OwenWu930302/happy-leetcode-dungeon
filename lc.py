@@ -716,8 +716,17 @@ def run_test(p: dict, data_input=None, where: str = None) -> dict:
     data_input = data_input if data_input else q["exampleTestcases"]
     where = where or test_mode()
     fallback = None
-    if lang in SQL_LANGS:  # SQL 題要有 LeetCode 的資料表與測資，一律線上試跑
-        where, fallback = "online", "SQL 題要用 LeetCode 上的資料表，"
+    if lang in SQL_LANGS:
+        # SQL 題：先在自己電腦的 SQL Server（LocalDB）照題目建表來跑，跑不了才用 LeetCode 線上試跑
+        if where != "online":
+            from game import sqllocal
+            try:
+                return sqllocal.run_local(q, code, data_input, server=load_config().get("sqlServer"))
+            except sqllocal.Unsupported as e:
+                if where == "local":
+                    raise LcError(f"❌ 這題沒辦法在本機跑 SQL：{e}", "code")
+                fallback = str(e) + "，"
+        where = "online"
     if where != "online":
         from game import localrun
         try:

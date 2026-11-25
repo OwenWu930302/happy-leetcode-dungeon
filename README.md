@@ -117,7 +117,9 @@ LeetCode 有 Cloudflare 防火牆，程式直接送出的提交，有時會被�
 1. 到「設定 → 遠征題型」選 **SQL**（或「演算法＋SQL 混合」）。
 2. 遠征的戰鬥、酒館的推薦、技能樹都會換成 LeetCode 的資料庫題（內建題庫裡有 54 題免費題）。
 3. 解題檔是 `.sql`，用 LeetCode 官方的 T-SQL 範本；遊戲內編輯器有 SQL 語法上色。
-4. 試招一律用 LeetCode 線上試跑（要用官網的資料表與測資），所以需要先登入。
+4. 試招會先在你自己電腦的 SQL Server 跑：照題目建出資料表、放進範例資料、跑你的查詢、跟範例答案比對，幾百毫秒就有結果；本機跑不了才改用 LeetCode 線上試跑。出招（正式提交）一樣送到 LeetCode。
+   - 需要 SQL Server（預設連 LocalDB `(localdb)\MSSQLLocalDB`，裝 Visual Studio 時通常會一起裝）和 Microsoft ODBC Driver 17／18 for SQL Server。要連別台 SQL Server，在工作區的 `config.json` 加上 `"sqlServer": "伺服器名稱"`。
+   - 題目畫面的「建立本機資料表」會把這題的資料表建在 `LeetCodeLocal` 資料庫，方便你用 VS Code 或 SSMS 連過去自己查；做完按「刪除本機資料表」。不會動到其他資料庫。
 5. 卡住時的提示階梯有 SQL 專用的骨架（JOIN、GROUP BY、HAVING、視窗函數）。
 
 演算法題的解題語言照舊在「設定 → 解題語言」選，SQL 題不受影響；切回「演算法」就跟以前一模一樣。

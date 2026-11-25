@@ -1,2 +1,3 @@
 requests>=2.31
 xhtml2pdf>=0.2.17
+pyodbc>=5.0

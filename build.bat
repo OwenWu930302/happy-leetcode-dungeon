@@ -9,6 +9,7 @@ python -m PyInstaller --noconfirm --onefile --name LeetCodeDungeon ^
   --add-data "data\problems.json;data" ^
   --add-data "game\build_info.json;game" ^
   --collect-submodules game ^
+  --hidden-import pyodbc ^
   --exclude-module xhtml2pdf --exclude-module reportlab ^
   launcher.py || goto :err
 echo.
