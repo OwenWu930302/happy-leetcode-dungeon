@@ -96,7 +96,12 @@ LANGS = {
     "golang": (".go", "//", "Go"),
     "rust": (".rs", "//", "Rust"),
     "kotlin": (".kt", "//", "Kotlin"),
+    "mssql": (".sql", "--", "MS SQL Server"),
 }
+
+# SQL 題（LeetCode Database 題）專用的語言，不會出現在「解題語言」選單裡
+SQL_LANGS = ("mssql",)
+SQL_TAG = "database"
 
 
 def ensure_home():
@@ -535,8 +540,24 @@ def cmd_show(args):
 # 4. new — 建立解題檔
 # ---------------------------------------------------------------------------
 def default_lang() -> str:
+    """演算法題的解題語言（SQL 題另外用 sql_lang）。"""
     lang = load_config().get("lang") or "python3"
-    return lang if lang in LANGS else "python3"
+    return lang if lang in LANGS and lang not in SQL_LANGS else "python3"
+
+
+def sql_lang() -> str:
+    """SQL 題的解題語言。目前支援 MS SQL Server（T-SQL）。"""
+    lang = load_config().get("sqlLang") or "mssql"
+    return lang if lang in SQL_LANGS else "mssql"
+
+
+def is_sql_problem(p: dict) -> bool:
+    return SQL_TAG in (p.get("tags") or [])
+
+
+def lang_for(p: dict) -> str:
+    """這題該用哪個語言寫：SQL 題用 SQL，其他用設定的解題語言。"""
+    return sql_lang() if is_sql_problem(p) else default_lang()
 
 
 def solution_path(p: dict, lang: str = None) -> Path:
@@ -547,7 +568,7 @@ def solution_path(p: dict, lang: str = None) -> Path:
             f = SOLUTIONS_DIR / (stem + ext)
             if f.exists():
                 return f
-        lang = default_lang()
+        lang = lang_for(p)
     return SOLUTIONS_DIR / (stem + LANGS.get(lang, LANGS["python3"])[0])
 
 
@@ -567,10 +588,14 @@ def create_solution(p: dict, force: bool = False, lang: str = None):
     existing = solution_path(p)
     if existing.exists() and not force:
         return existing, False
-    lang = lang or default_lang()
+    lang = lang or lang_for(p)
+    if is_sql_problem(p) != (lang in SQL_LANGS):  # SQL 題只能寫 SQL，演算法題不能寫 SQL
+        lang = lang_for(p)
     q = fetch_question_detail(p["slug"])
     snippet = get_snippet(q, lang)
-    if not snippet:
+    if not snippet and lang in SQL_LANGS:
+        snippet = "/* Write your T-SQL query statement below */\n"  # 這題官方沒給 SQL 範本
+    elif not snippet:
         lang, snippet = "python3", get_python_snippet(q)
     ext, c, _ = LANGS[lang]
     path = solution_path(p, lang)
@@ -620,7 +645,7 @@ def read_solution(p: dict):
     raw = path.read_text(encoding="utf-8")
     meta = {}
     for line in raw.splitlines():
-        m = re.match(r"\s*(?:#|//)\s*meta-(\w+):\s*(.+)", line)
+        m = re.match(r"\s*(?:#|//|--)\s*meta-(\w+):\s*(.+)", line)
         if m:
             meta[m.group(1)] = m.group(2).strip()
 
@@ -682,6 +707,8 @@ def run_test(p: dict, data_input=None, where: str = None) -> dict:
     data_input = data_input if data_input else q["exampleTestcases"]
     where = where or test_mode()
     fallback = None
+    if lang in SQL_LANGS:  # SQL 題要有 LeetCode 的資料表與測資，一律線上試跑
+        where, fallback = "online", "SQL 題要用 LeetCode 上的資料表，"
     if where != "online":
         from game import localrun
         try:

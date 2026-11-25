@@ -38,6 +38,11 @@ SKELETONS = {
     "binary-tree": "solve(node)：\n    node 是空的 → 回傳基本值\n    left = solve(node.left)\n    right = solve(node.right)\n    用 left、right、node.val 組出這棵子樹的答案\n（要一層一層處理時，改用佇列做層序走訪）",
     "binary-search-tree": "利用左小右大：\n    目標比 node.val 小 → 往左\n    目標比較大 → 往右\n中序走訪會得到排序好的序列",
     "graph": "adj[u] = [v, ...]（鄰接表）\n用 BFS 或 DFS 走過相連的點\n一定要標記走過，避免繞圈",
+    "database": ("SELECT 要輸出的欄位（題目要求的欄名，用 AS 改名）\n"
+                 "FROM 主表 a\n[LEFT] JOIN 另一張表 b ON b.外鍵 = a.主鍵   -- 對不到也要保留就用 LEFT JOIN\n"
+                 "WHERE 篩選「每一列」的條件\nGROUP BY 分組欄位\nHAVING 篩選「每一組」的條件（COUNT、SUM…）\n"
+                 "-- 排名、前 N 名、跟上一筆比：ROW_NUMBER()／RANK()／LAG() OVER (PARTITION BY … ORDER BY …)\n"
+                 "-- NULL 要用 IS NULL 判斷；T-SQL 取前幾筆用 TOP (n)"),
     "topological-sort": "算每個點的入度\nq = 所有入度為 0 的點\n當 q 不空：\n    取出 u，放進結果\n    把 u 指向的點入度 -1，變成 0 就放進 q\n結果少於 n 個 → 有環",
     "shortest-path": "dist = 全部無限大，dist[起點] = 0\nh = 最小堆積 [(0, 起點)]\n當 h 不空：\n    取出 (d, u)；d 比 dist[u] 大就跳過\n    對每條邊 (u, v, w)：能讓 dist[v] 變小就更新並放進 h",
     "union-find": "parent[i] = i\nfind(x)：沿著 parent 往上找根，順便路徑壓縮\nunion(a, b)：把兩個根接起來\n同一群 ⇔ find(a) == find(b)",

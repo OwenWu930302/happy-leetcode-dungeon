@@ -21,6 +21,7 @@ from collections import defaultdict
 TAG_INFO = {
     # slug: (中文名, 圖示字, [前置標籤])
     "array": ("陣列", "陣", []),
+    "database": ("SQL 查詢", "庫", []),
     "string": ("字串", "字", ["array"]),
     "hash-table": ("雜湊表", "雜", ["array"]),
     "math": ("數學", "數", []),
@@ -90,8 +91,23 @@ TAG_INFO = {
     "rejection-sampling": ("拒絕抽樣", "拒", ["randomized"]),
 }
 
-# 不是 Python 演算法題（要寫 SQL / Bash / 多執行緒），不放進技能樹與推薦
-EXCLUDED_TAGS = {"database", "shell", "concurrency"}
+# 不放進技能樹與推薦的題型（Bash／多執行緒）
+EXCLUDED_TAGS = {"shell", "concurrency"}
+
+# SQL 題（LeetCode 的 Database 題）：要不要玩由「遠征題型」決定
+SQL_TAG = "database"
+FOCUS_MODES = ("algo", "sql", "mixed")  # 只有演算法／只有 SQL／兩種混著
+FOCUS = "algo"
+
+
+def set_focus(mode):
+    """設定遠征題型。algo＝演算法（預設，跟以前一樣）、sql＝只出 SQL 題、mixed＝混合。"""
+    global FOCUS
+    FOCUS = mode if mode in FOCUS_MODES else "algo"
+
+
+def is_sql(p):
+    return SQL_TAG in (p.get("tags") or [])
 
 DIFF_PTS = {"Easy": 1, "Medium": 2, "Hard": 3}
 DIFF_XP = {"Easy": 10, "Medium": 25, "Hard": 50}
@@ -117,8 +133,14 @@ def set_ratings(table):
 
 
 def playable(p):
-    """這題能不能拿來玩：免費、而且不是 SQL / Bash / 多執行緒題。"""
-    return not p.get("paidOnly") and not (set(p.get("tags", [])) & EXCLUDED_TAGS)
+    """這題能不能拿來玩：免費、不是 Bash／多執行緒題，而且符合目前的遠征題型。"""
+    if p.get("paidOnly") or (set(p.get("tags", [])) & EXCLUDED_TAGS):
+        return False
+    if FOCUS == "sql":
+        return is_sql(p)
+    if FOCUS == "algo":
+        return not is_sql(p)
+    return True
 
 
 def problem_rating(p):
@@ -388,6 +410,7 @@ def compute_power(problems, records, contest=None):
 # 琥珀（系統化策略）推題時附上的觀念提示
 CONCEPTS = {
     "array": "用索引直接存取，常搭配一次走訪 O(n)",
+    "database": "先想清楚要從哪幾張表拿資料、怎麼 JOIN 起來，再決定篩選（WHERE）、分組（GROUP BY）和排序",
     "string": "字元走訪、切片與比較，注意不可變的成本",
     "hash-table": "用空間換時間：O(1) 查詢「看過沒」",
     "math": "先找規律或公式，避免硬算",

@@ -490,7 +490,7 @@ function renderHome() {
       <div class="panel">
         <div class="eyebrow">Library</div>
         <h2>題庫與同步</h2>
-        <p class="muted" style="margin:0 0 10px">題庫 ${lib.total} 題，其中 ${lib.playable} 題能玩（排除付費、SQL、Shell）。${lib.allDifficulties ? "已包含中等與困難題。" : "目前只有簡單題，抓全部難度後技能樹會長出動態規劃、圖論等更深的分支。"}</p>
+        <p class="muted" style="margin:0 0 10px">題庫 ${lib.total} 題，其中 ${lib.playable} 題能玩（遠征題型：${FOCUS_NAMES[S.focus] || "演算法"}；已排除付費題與 Shell 題）。${lib.allDifficulties ? "已包含中等與困難題。" : "目前只有簡單題，抓全部難度後技能樹會長出動態規劃、圖論等更深的分支。"}</p>
         <div class="row">
           <button class="btn" data-do="sync">同步官網進度</button>
           ${lib.allDifficulties ? `<button class="btn ghost" data-do="fetch">更新題庫</button>` : `<button class="btn rune" data-do="fetchAll">擴充題庫（全部難度）</button>`}
@@ -1019,7 +1019,8 @@ const ED = { cm: null, slug: null, file: "", mtime: null, lang: "python3", dirty
 let showEditor = true;
 try { showEditor = localStorage.getItem("showEditor") !== "0"; } catch (e) {}
 const tplCache = {};
-const CM_MODE = { python3: "python", cpp: "text/x-c++src", c: "text/x-csrc", java: "text/x-java", csharp: "text/x-csharp", kotlin: "text/x-kotlin" };
+const CM_MODE = { python3: "python", cpp: "text/x-c++src", c: "text/x-csrc", java: "text/x-java", csharp: "text/x-csharp", kotlin: "text/x-kotlin", mssql: "text/x-mssql" };
+const FOCUS_NAMES = { algo: "演算法", sql: "SQL", mixed: "演算法＋SQL 混合" };
 
 function probHeadHTML(slug, q, inBattle, bounty, solvedNow) {
   return `<div class="prob-head">
@@ -1475,7 +1476,7 @@ async function startBrowserLogin() {
 function renderSettings() {
   const el = $("#tab-settings");
   const p = profile();
-  const sig = JSON.stringify([p, S.persona, S.login, S.lang, S.transport, S.testMode, S.vscodeInstalled, S.library.total, S.bond, S.checkUpdates]);
+  const sig = JSON.stringify([p, S.persona, S.login, S.lang, S.focus, S.transport, S.testMode, S.vscodeInstalled, S.library.total, S.bond, S.checkUpdates]);
   if (sig === settingsSig && el.childElementCount) return;
   settingsSig = sig;
   el.innerHTML = `
@@ -1534,6 +1535,12 @@ function renderSettings() {
       <h2>解題語言</h2>
       <p class="muted" style="margin:4px 0 10px">新建立的解題檔會用這個語言的官方範本。已經建好的檔案不會被改動。</p>
       <label class="field" style="max-width:280px">語言<select id="pfLang">${S.langs.map((l) => `<option value="${l.id}" ${l.id === S.lang ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></label>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Focus · 遠征題型</div>
+      <h2>要練什麼</h2>
+      <p class="muted" style="margin:4px 0 10px">選「SQL」時，遠征、推薦和技能樹只出 LeetCode 的資料庫題（免費 ${S.library.sql || 0} 題），用 ${esc(S.sqlLangName || "MS SQL Server")} 作答，試招會用 LeetCode 線上試跑。換題型不會影響已經解過的紀錄。</p>
+      <label class="field" style="max-width:280px">題型<select id="pfFocus">${Object.entries(FOCUS_NAMES).map(([k, v]) => `<option value="${k}" ${k === S.focus ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
     </div>
     <div class="panel">
       <div class="eyebrow">Environment · 環境檢查</div>
@@ -2118,6 +2125,7 @@ document.addEventListener("change", async (ev) => {
     if (st) { settingsSig = ""; render(); sayLine("greet"); toast("info", `個性換成${persona().name}`, persona().style); }
     return;
   }
+  if (t.id === "pfFocus") { const st = await act("/api/profile", { focus: t.value }); if (st) { settingsSig = ""; render(); toast("info", "遠征題型已更新", t.selectedOptions[0].textContent); } return; }
   if (t.id === "pfLang") { const st = await act("/api/profile", { lang: t.value }); if (st) toast("info", "解題語言已更新", t.selectedOptions[0].textContent); return; }
   if (t.id === "pfDim") { await act("/api/profile", { dim: Number(t.value) }); return; }
 });

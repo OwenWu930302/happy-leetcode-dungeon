@@ -171,6 +171,7 @@ def load_world():
 
 
 def context(problems, records):
+    engine.set_focus(lc.load_config().get("focus", "algo"))
     if not engine.RATINGS:
         engine.set_ratings(lc.load_ratings())
     engine.set_mistakes(mistakes.open_by_slug(mistakes.load(lc.DATA_DIR)))
@@ -179,7 +180,7 @@ def context(problems, records):
     power = engine.compute_power(problems, records, contest=lc.load_json(lc.DATA_DIR / "contest.json", None))
     st = strategy()
     return {"problems": problems, "records": records, "tree": tree, "power": power,
-            "mode": st["mode"], "strategy": st, "lang": lc.default_lang()}
+            "mode": st["mode"], "strategy": st, "lang": lc.default_lang(), "focus": engine.FOCUS}
 
 
 # ---------------------------------------------------------------------------
@@ -370,13 +371,16 @@ def build_state(save, events=None):
         "picks": picks,
         "recent": solved_recent,
         "library": {"total": len(problems), "playable": sum(1 for p in problems if engine.playable(p)),
+                    "sql": sum(1 for p in problems if engine.is_sql(p) and not p.get("paidOnly")),
                     "allDifficulties": any(p.get("difficulty") != "Easy" for p in problems)},
         "login": logged_in(cfg),
         "profile": {k: v for k, v in load_profile().items()},
         "persona": persona_of(load_profile()),
         "dayStreak": engine.day_streak(records),
-        "langs": [{"id": k, "name": v[2]} for k, v in lc.LANGS.items()],
+        "langs": [{"id": k, "name": v[2]} for k, v in lc.LANGS.items() if k not in lc.SQL_LANGS],
         "lang": lc.default_lang(),
+        "focus": engine.FOCUS,
+        "sqlLangName": lc.LANGS[lc.sql_lang()][2],
         "transport": lc.transport(),
         "testMode": lc.test_mode(),
         "workspace": str(lc.ROOT),
@@ -482,8 +486,14 @@ def api(path, body, query):
                 cfg = lc.load_config()
                 cfg["testMode"] = body["testMode"]
                 lc.save_json(lc.CONFIG_PATH, cfg)
+            if "focus" in body:
+                if body["focus"] not in engine.FOCUS_MODES:
+                    raise ValueError("沒有這種遠征題型")
+                cfg = lc.load_config()
+                cfg["focus"] = body["focus"]
+                lc.save_json(lc.CONFIG_PATH, cfg)
             if "lang" in body:
-                if body["lang"] not in lc.LANGS:
+                if body["lang"] not in lc.LANGS or body["lang"] in lc.SQL_LANGS:
                     raise ValueError("不支援這個語言")
                 cfg = lc.load_config()
                 cfg["lang"] = body["lang"]

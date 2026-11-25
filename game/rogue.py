@@ -414,7 +414,7 @@ def enter(save, key, ctx):
         if t == "boss":
             rules = ["timed", "fury", "first"]
             lang = ctx.get("lang")
-            if lang in LANG_NAMES:
+            if lang in LANG_NAMES and ctx.get("focus", "algo") == "algo":  # SQL 題只能寫 SQL，不封印語言
                 rules.append("lang")
             rule = rng.choice(rules)
             run["current"]["rule"] = rule
