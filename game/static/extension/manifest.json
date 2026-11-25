@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "LeetCode 地城登入小幫手",
+  "version": "1.0.0",
+  "description": "在平常的瀏覽器登入 LeetCode 後，自動把登入資訊交給你電腦上的 LeetCode 演算法地城。只讀 leetcode.com 的 LEETCODE_SESSION 與 csrftoken，只送到本機 127.0.0.1。",
+  "permissions": ["cookies", "alarms"],
+  "host_permissions": ["https://leetcode.com/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "LeetCode 地城登入小幫手：按一下立刻同步登入" }
+}

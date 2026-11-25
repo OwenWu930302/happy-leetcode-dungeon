@@ -76,6 +76,14 @@ python lc.py game
 2. 按 `F12` → **Application（應用程式）** → 左邊 **Cookies** → `https://leetcode.com`。
 3. 複製 `LEETCODE_SESSION` 和 `csrftoken` 的 Value，貼到「設定 → 帳號 → 備案：手動貼 cookie」，按「驗證並登入」。
 
+**方法三：登入小幫手（瀏覽器擴充功能，不用複製貼上）**
+
+到「設定 → 帳號」按「安裝登入小幫手」，照畫面上的四步把它載入你平常用的 Chrome 或 Edge（只要一次）。之後只要遊戲開著、你在那個瀏覽器登入過 leetcode.com，遊戲就會自動登入；cookie 過期或換帳號時也會自動更新。登入是在你平常的瀏覽器完成，不會被 Cloudflare 擋。
+
+- 它只讀 leetcode.com 的 `LEETCODE_SESSION` 和 `csrftoken`，只送到你電腦上的遊戲（127.0.0.1），不碰密碼。
+- 遊戲只接受瀏覽器擴充功能送來的登入資訊（網站沒辦法冒充），存之前會先跟 LeetCode 確認帳號。
+- 原始碼在 [`game/static/extension/`](game/static/extension/)。
+
 不管用哪個方法，cookie 都只存在你電腦上工作區的 `config.json`，不會上傳到任何地方。
 
 ### 提交會不會被 LeetCode 擋？

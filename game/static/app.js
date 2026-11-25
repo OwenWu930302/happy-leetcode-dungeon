@@ -943,6 +943,7 @@ const ERR_HELP = {
   rate: { title: "送得太頻繁，LeetCode 要你等一下", btn: "retry" },
   blocked: { title: "被 LeetCode 的防火牆擋下", btn: "retry" },
   timeout: { title: "判題等太久了", btn: "sync" },
+  cloudflare: { title: "LeetCode 的防火牆擋住了送出", btn: "web" },
   login: { title: "需要登入 LeetCode", btn: "login" },
   code: { title: "程式碼還不能送", btn: "open" },
   bug: { title: "遊戲出了一點錯（不是你的問題）", btn: "report" },
@@ -959,6 +960,7 @@ function errorBlock(slug, r) {
     sync: `<button class="btn primary" data-do="sync">同步官網進度</button><button class="btn" data-submit="${esc(slug)}">再出招一次</button>`,
     login: `<button class="btn primary" data-go="settings">到設定登入</button>`,
     open: `<button class="btn primary" data-open="${esc(slug)}">在 VS Code 開檔</button><button class="btn" data-${r.action === "submit" ? "submit" : "test"}="${esc(slug)}">存好了，再${verb}</button>`,
+    web: `<button class="btn primary" data-websubmit="${esc(slug)}">改到官網出招</button><button class="btn" data-do="sync">同步官網進度</button><button class="btn ghost" data-${r.action === "submit" ? "submit" : "test"}="${esc(slug)}">再試一次</button>`,
     report: `<button class="btn primary" data-report>產生錯誤報告</button><button class="btn" data-${r.action === "submit" ? "submit" : "test"}="${esc(slug)}">再試一次</button>`,
   }[h.btn];
   return `<div class="errcard" role="alert"><b>${esc(h.title)}</b><p>${esc(main)}</p>
@@ -1447,11 +1449,17 @@ function loginForm() {
       <p class="muted" style="font-size:12.5px;margin:0">會開一個獨立的登入視窗，在裡面正常登入（email、GitHub、Google 都可以），完成後視窗會自動關閉。密碼是直接輸入給 LeetCode，遊戲碰不到。</p>
       <div class="blogin-status"></div>
     </div>` : ""}
+    <div style="display:grid;gap:6px;margin-bottom:12px">
+      <div><button class="btn" data-extinstall>安裝登入小幫手（瀏覽器擴充功能）</button></div>
+      <p class="muted" style="font-size:12.5px;margin:0">裝在你平常用的 Chrome／Edge，只要裝一次。之後在平常的瀏覽器登入 leetcode.com，遊戲就會自動登入，過期或換帳號也會自動更新，不用複製貼上。</p>
+      <div class="ext-status"></div>
+    </div>
     <details ${viaBrowser ? "" : "open"}><summary class="muted" style="cursor:pointer;margin-bottom:8px">${viaBrowser ? "備案：手動貼 cookie" : "貼上 cookie 登入"}</summary>${manual}</details>
     <p class="muted" style="font-size:12.5px;margin:8px 0 0">登入資訊只存在你電腦上的 <span class="mono">config.json</span>，不會上傳到任何地方。大約兩週會過期，到時候再按一次登入就好。</p>`;
 }
 
 let bloginTimer = null;
+let extTimer = null;
 function bloginShow(html) { document.querySelectorAll(".blogin-status").forEach((e) => (e.innerHTML = html)); }
 async function startBrowserLogin() {
   let st;
@@ -2024,6 +2032,42 @@ document.addEventListener("click", async (ev) => {
   if (d.view) return viewProblem(d.view);
   if (d.open) return openFile(d.open);
   if (d.test) return runTest(d.test);
+  if (d.extinstall !== undefined) {
+    const r = await act("/api/ext/install", {});
+    if (!r) return;
+    const html = `<div class="notice"><b>照這四步裝好（只要一次）：</b><ol class="steps" style="margin:6px 0 0">
+      <li>Chrome 打開 <code>chrome://extensions</code>，Edge 打開 <code>edge://extensions</code>（複製貼到網址列）</li>
+      <li>打開「開發人員模式」</li>
+      <li>按「載入未封裝項目」，選這個資料夾：<code>${esc(r.path)}</code>${r.opened ? "（已經幫你打開了）" : ""}</li>
+      <li>在那個瀏覽器登入 leetcode.com；已經登入的話，重新整理一次 LeetCode 頁面</li></ol>
+      <p class="muted" style="margin:6px 0 0">完成後這裡會自動變成已登入。工具列的小幫手圖示出現 ✓ 就代表同步好了。</p></div>`;
+    document.querySelectorAll(".ext-status").forEach((e) => (e.innerHTML = html));
+    clearInterval(extTimer);
+    const until = Date.now() + 15 * 60 * 1000;
+    extTimer = setInterval(async () => {
+      if (Date.now() > until) return clearInterval(extTimer);
+      let st;
+      try { st = await api("/api/state"); } catch (e) { return; }
+      if (!st.login) return;
+      clearInterval(extTimer);
+      settingsSig = ""; modalKey = "";
+      st.events = [{ kind: "login", user: (st.profile || {}).lcUser }];
+      applyState(st);
+      toast("win", "登入小幫手已幫你登入", "之後在平常的瀏覽器登入 LeetCode，遊戲就會自動同步");
+    }, 3000);
+    return;
+  }
+  if (d.websubmit) {
+    // 在自己平常的瀏覽器提交：複製程式碼、打開官網題目頁；回來按「同步官網進度」就會算戰果
+    const r = await act("/api/code/plain", { slug: d.websubmit });
+    if (!r) return;
+    let copied = false;
+    try { await navigator.clipboard.writeText(r.code); copied = true; } catch (e) { /* 沒權限就請玩家自己複製 */ }
+    window.open(r.url, "_blank", "noopener");
+    toast("info", copied ? "程式碼已複製，貼到官網按 Submit" : "請到 VS Code 複製程式碼，貼到官網按 Submit",
+      `官網語言要選 ${r.langName}。送出後回來按「同步官網進度」，戰果照算。`);
+    return;
+  }
   if (d.sqlsetup) {
     const r = await act("/api/sql/setup", { slug: d.sqlsetup }, "在本機建立資料表…（第一次啟動 LocalDB 要等幾秒）");
     if (r) toast("win", "本機資料表建好了", `${Object.entries(r.tables).map(([t, n]) => `${t}（${n} 列）`).join("、")}｜${r.server} → ${r.database}，可以在 VS Code 連過去自己查`);

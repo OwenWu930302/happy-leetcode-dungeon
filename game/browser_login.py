@@ -556,7 +556,7 @@ class BrowserRelay:
                 self.page.call("Network.setCookie", {"name": name, "value": value, "domain": host, "path": "/",
                                                      "secure": secure, "httpOnly": http_only})
 
-    def request(self, method, path, payload=None, referer=None, wait=180):
+    def request(self, method, path, payload=None, referer=None, wait=60):
         """回傳 (狀態碼, 內容文字, cf-mitigated)。"""
         with self.lock:
             url = self.base + (referer or "/problemset/")

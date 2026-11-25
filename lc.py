@@ -295,6 +295,7 @@ def lc_request(session, method, path, payload=None, referer=None, action="請求
     global _RELAY_UNTIL
     url = BASE + path
     relay = None
+    relay_error = None
     if transport() == "browser" or time.time() < _RELAY_UNTIL:
         relay = get_relay()
     if relay is not None:
@@ -303,24 +304,50 @@ def lc_request(session, method, path, payload=None, referer=None, action="請求
             resp = RelayResponse(method, url, status, text, mit)
             check_response(resp, action)
             return resp.json()
-        except (RuntimeError, OSError, ConnectionError, ValueError) as e:
+        except (RuntimeError, OSError, ConnectionError, ValueError) as e:  # TimeoutError 也在這裡
             print(f"⚠️  瀏覽器送出失敗（{e}），改由程式直接送出…")
-            relay = None
+            relay, relay_error = None, e
+        except SystemExit as e:  # NeedsUser：視窗裡的真人驗證沒有完成
+            if type(e).__name__ != "NeedsUser":
+                raise
+            relay, relay_error = None, RuntimeError("視窗裡的真人驗證沒有完成")
     if relay is None:
-        resp = session.request(method, url, json=payload if method == "POST" else None,
-                               headers={"Referer": BASE + (referer or "/")}, timeout=30)
+        try:
+            resp = session.request(method, url, json=payload if method == "POST" else None,
+                                   headers={"Referer": BASE + (referer or "/")}, timeout=30)
+        except requests.RequestException as e:
+            raise LcError(f"❌ 連不到 LeetCode（{type(e).__name__}），這次{action}沒有送出去。\n"
+                          "   檢查網路後再試一次；一直不行的話，用「改到官網出招」。", "network")
         if not is_challenge(resp):
             check_response(resp, action)
             return resp.json()
-        relay = get_relay()
+        relay = None if relay_error else get_relay()  # 瀏覽器剛剛才失敗過：不要再等一次
         if relay is None:
-            check_response(resp, action)  # 沒有瀏覽器可用：照原本的方式回報
+            raise blocked_error(action, relay_error)
         print("🛡️  LeetCode 要求真人驗證，改用瀏覽器視窗送出…（如果視窗裡出現驗證，請點一下）")
         _RELAY_UNTIL = time.time() + 1800
-    status, text, mit = relay.request(method, path, payload, referer)
+    try:
+        status, text, mit = relay.request(method, path, payload, referer)
+    except (RuntimeError, OSError, ConnectionError, ValueError) as e:
+        raise blocked_error(action, e)
+    except SystemExit as e:
+        if type(e).__name__ != "NeedsUser":
+            raise
+        raise blocked_error(action, RuntimeError("視窗裡的真人驗證沒有完成"))
     resp = RelayResponse(method, url, status, text, mit)
     check_response(resp, action)
     return resp.json()
+
+
+def blocked_error(action: str, cause=None) -> "LcError":
+    """瀏覽器代送和直接送出都被 LeetCode 的防火牆（Cloudflare）擋下：給一條一定走得通的路。"""
+    tech = f"\n   技術細節：{type(cause).__name__}: {cause}" if cause else ""
+    if action == "取得判題結果":  # 程式碼已經送出去了，只是拿不到結果
+        return LcError("❌ 程式碼已經送出，但 LeetCode 的防火牆擋住了判題結果。\n"
+                       "   按「同步官網進度」就能拿回這次的結果，不用重送。" + tech, "timeout")
+    return LcError(f"❌ LeetCode 的防火牆（Cloudflare）擋住了遊戲送出，這次{action}沒有送出去。這不是你的程式碼的問題。\n"
+                   "   按「改到官網出招」：程式碼會複製好、打開這題的官網頁面，貼上按 Submit；"
+                   "回來按「同步官網進度」，戰果照算。" + tech, "cloudflare")
 
 
 def graphql(session: requests.Session, query: str, variables: dict) -> dict:

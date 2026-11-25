@@ -135,7 +135,8 @@ def logged_in(cfg):
 
 
 def save_login(sess, csrf, user, avatar):
-    threading.Thread(target=lambda: lc.fetch_contest(user), daemon=True).start()
+    if user:
+        threading.Thread(target=lambda: lc.fetch_contest(user), daemon=True).start()
     with LOCK:
         cfg = lc.load_config()
         cfg.update({"session": sess, "csrftoken": csrf})
@@ -146,6 +147,37 @@ def save_login(sess, csrf, user, avatar):
         if not prof["name"]:
             prof["name"] = user
         save_profile(prof)
+
+
+EXT_ORIGINS = ("chrome-extension://", "moz-extension://", "extension://")
+
+
+def ext_login(origin, body):
+    """「登入小幫手」擴充功能送來的登入 cookie。回傳 (HTTP 狀態碼, 內容)。
+
+    只接受瀏覽器擴充功能（Origin 是 chrome-extension:// 之類，網站沒辦法偽造）；
+    內容只有兩個 cookie，存之前先問 LeetCode 這組 cookie 是誰。跟現在存的一樣就什麼都不做。
+    """
+    tag = {"app": "LeetCodeDungeon"}
+    if not str(origin or "").startswith(EXT_ORIGINS):
+        return 403, {**tag, "error": "只接受登入小幫手擴充功能"}
+    sess = str((body or {}).get("session", "")).strip()
+    csrf = str((body or {}).get("csrftoken", "")).strip()
+    if len(sess) < 20 or len(csrf) < 10 or len(sess) > 8000 or len(csrf) > 400:
+        return 400, {**tag, "error": "登入資訊不完整"}
+    cfg = lc.load_config()
+    prof = load_profile()
+    if cfg.get("session") == sess and cfg.get("csrftoken") == csrf and logged_in(cfg):
+        return 200, {**tag, "ok": True, "same": True, "user": prof.get("lcUser")}
+    try:
+        user, avatar = verify_login(sess, csrf)
+    except ValueError as e:  # LeetCode 說這組 cookie 沒登入
+        return 400, {**tag, "error": str(e)}
+    except Exception:  # noqa: BLE001  問不到 LeetCode（網路、防火牆）：cookie 來自真正登入中的瀏覽器，照存
+        user, avatar = prof.get("lcUser"), prof.get("lcAvatar")
+    save_login(sess, csrf, user, avatar)
+    report.LOG.info("登入小幫手同步了登入資訊（%s）", user or "未確認帳號")
+    return 200, {**tag, "ok": True, "user": user}
 
 
 def verify_login(session_cookie, csrftoken):
@@ -531,6 +563,22 @@ def api(path, body, query):
             save_login(sess, csrf, user, avatar)
             return build_state(save, [{"kind": "login", "user": user}])
 
+        if path == "/api/ext/install":
+            # 把登入小幫手擴充功能放到工作區，打開資料夾，照畫面上的步驟載入瀏覽器
+            src, dst = STATIC / "extension", lc.ROOT / "browser-extension"
+            dst.mkdir(parents=True, exist_ok=True)
+            for f in src.iterdir():
+                if f.is_file():
+                    shutil.copyfile(f, dst / f.name)
+            opened = False
+            if os.name == "nt":
+                try:
+                    os.startfile(str(dst))  # noqa: S606  打開檔案總管
+                    opened = True
+                except OSError:
+                    pass
+            return {"path": str(dst), "opened": opened}
+
         if path == "/api/login/browser":
             return BROWSER.start(save_login)
 
@@ -678,6 +726,13 @@ def api(path, body, query):
             return {"file": fpath.name, "text": raw.replace("\r\n", "\n"), "mtime": str(fpath.stat().st_mtime_ns),
                     "lang": lang, "codeLine": lc.solution_offset(fpath), "cursorLine": code_line(fpath),
                     "crlf": "\r\n" in raw}
+
+        if path == "/api/code/plain":
+            # 「改到官網出招」：只拿你寫的程式碼（不含檔頭），加上官網題目網址與該選的語言
+            p = find(body["slug"])
+            _, lang, code, _ = lc.read_solution(p)
+            return {"code": code.strip() + "\n", "url": f"{lc.BASE}/problems/{p['slug']}/",
+                    "langName": lc.LANGS.get(lang, ("", "", lang))[2]}
 
         if path == "/api/code/save":
             p = find(body["slug"])
@@ -880,6 +935,15 @@ class Handler(BaseHTTPRequestHandler):
             if not f:
                 return self._send(404, {"error": "找不到"})
             return self._send(200, f.read_bytes(), mods.IMAGE_EXT[f.suffix.lower()])
+        if u.path == "/ext/login" and method == "POST":  # 登入小幫手（瀏覽器擴充功能）
+            n = min(int(self.headers.get("Content-Length") or 0), 16384)
+            try:
+                body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+            except ValueError:
+                body = {}
+            with LOCK:
+                code, payload = ext_login(self.headers.get("Origin"), body)
+            return self._send(code, payload)
         if not u.path.startswith("/api/"):
             return self._static("index.html" if u.path in ("/", "") else u.path.lstrip("/"))
         if self.headers.get("X-Game-Token") != TOKEN:

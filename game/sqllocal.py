@@ -138,12 +138,18 @@ def table_statements(schema: dict, case: dict) -> list:
         if rows:
             marks = ", ".join("?" for _ in cols)
             sql = f"INSERT INTO {_q(table)} ({', '.join(_q(c) for c in cols)}) VALUES ({marks})"
+            kinds = [d.split(" ")[1] for d in defs]
             for r in rows:
-                stmts.append((sql, [_param(v) for v in r]))
+                stmts.append((sql, [_param(v, kinds[i] if i < len(kinds) else "") for i, v in enumerate(r)]))
     return stmts
 
 
-def _param(v):
+def _param(v, kind=""):
+    if kind.startswith(("DATE", "DATETIME")) and isinstance(v, str):
+        # LeetCode 範例常寫成 4/1/2006（月/日/年）；中文環境的 SQL Server 可能當成日/月，先轉成 2006-04-01
+        m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})(.*)", v.strip())
+        if m:
+            return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}{m.group(4)}"
     if isinstance(v, bool):
         return int(v)
     if isinstance(v, (dict, list)):

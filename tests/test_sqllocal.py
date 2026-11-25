@@ -173,6 +173,13 @@ class RunTests(unittest.TestCase):
         self.assertEqual(r["status_msg"], "Finished")
         self.assertIsNone(r["cases"][0]["expected"])
 
+    def test_us_dates_become_iso(self):
+        case = {"headers": {"SalesPerson": ["sales_id", "hire_date"]},
+                "rows": {"SalesPerson": [[1, "4/1/2006"], [3, "12/25/2008"], [5, "2007-02-03"]]}}
+        schema = {"SalesPerson": [("sales_id", "int"), ("hire_date", "date")]}
+        params = [p for s, p in S.table_statements(schema, case) if p]
+        self.assertEqual([p[1] for p in params], ["2006-04-01", "2008-12-25", "2007-02-03"])
+
     def test_setup_then_drop(self):
         conn = FakeConn()
         info = S.setup(Q175, conn=conn, server="test")
