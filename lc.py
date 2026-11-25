@@ -568,11 +568,16 @@ def solution_path(p: dict, lang: str = None) -> Path:
     """解題檔路徑。沒指定語言時，優先找已經存在的檔案（任何語言），否則用設定的語言。"""
     stem = f"{int(p['id']):04d}-{p['slug']}"
     if lang is None:
-        for code, (ext, _, _) in LANGS.items():
-            f = SOLUTIONS_DIR / (stem + ext)
+        # 先找這題該用的語言；其他語言只找同一類（SQL 題只認 SQL 檔，演算法題不會拿到 SQL 檔）。
+        # 舊版遇到 SQL 題會塞 MySQL 範本、存成 .py，那種檔案要忽略，不然會一直送錯檔。
+        want = lang_for(p)
+        sql = is_sql_problem(p)
+        order = [want] + [k for k in LANGS if k != want and (k in SQL_LANGS) == sql]
+        for code in order:
+            f = SOLUTIONS_DIR / (stem + LANGS[code][0])
             if f.exists():
                 return f
-        lang = lang_for(p)
+        lang = want
     return SOLUTIONS_DIR / (stem + LANGS.get(lang, LANGS["python3"])[0])
 
 

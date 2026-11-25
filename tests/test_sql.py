@@ -86,6 +86,27 @@ class SqlSolutionFileTests(unittest.TestCase):
         self.assertEqual(lc.lang_for(ALGO_PROBLEM), "csharp")
         self.assertEqual(lc.solution_path(SQL_PROBLEM).suffix, ".sql")
 
+    def test_sql_problem_ignores_stale_python_file(self):
+        # 舊版替 SQL 題建了 MySQL 範本的 .py：要拿 .sql，不能把 .py 送出去
+        lc.SOLUTIONS_DIR.mkdir(parents=True, exist_ok=True)
+        stem = f"{int(SQL_PROBLEM['id']):04d}-{SQL_PROBLEM['slug']}"
+        (lc.SOLUTIONS_DIR / (stem + ".py")).write_text("# meta-lang: python3\n# Write your MySQL query statement below\n",
+                                                        encoding="utf-8")
+        self.assertEqual(lc.solution_path(SQL_PROBLEM).suffix, ".sql")
+        path, created = lc.create_solution(SQL_PROBLEM)
+        self.assertTrue(created)
+        self.assertEqual(path.suffix, ".sql")
+        path.write_text(path.read_text(encoding="utf-8") + "SELECT class FROM Courses;\n", encoding="utf-8")
+        _, lang, code, used = lc.read_solution(SQL_PROBLEM)
+        self.assertEqual((lang, used.suffix), ("mssql", ".sql"))
+        self.assertIn("SELECT class", code)
+
+    def test_algo_problem_never_picks_sql_file(self):
+        lc.SOLUTIONS_DIR.mkdir(parents=True, exist_ok=True)
+        stem = f"{int(ALGO_PROBLEM['id']):04d}-{ALGO_PROBLEM['slug']}"
+        (lc.SOLUTIONS_DIR / (stem + ".sql")).write_text("-- stray\n", encoding="utf-8")
+        self.assertEqual(lc.solution_path(ALGO_PROBLEM).suffix, ".cs")
+
     def test_sql_is_never_the_algorithm_language(self):
         lc.save_json(lc.CONFIG_PATH, {"lang": "mssql"})
         self.assertEqual(lc.default_lang(), "python3")
