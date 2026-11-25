@@ -227,7 +227,8 @@ def check_response(resp: requests.Response, action: str):
                       "   等幾分鐘再按「重送」；一直被擋的話，試著改掉程式碼裡很長的註解或特殊字元。" + tail, "blocked")
     if resp.status_code == 429:
         raise LcError(f"❌ 送得太頻繁了（429），LeetCode 要你等一下。過一兩分鐘再{action}。" + tail, "rate")
-    if resp.status_code in (401, 403) and ("csrf" in low or "login" in low or "authentication" in low or not body.strip()):
+    if resp.status_code in (401, 403) and ("csrf" in low or "login" in low or "authenticat" in low
+                                           or "logged in" in low or not body.strip()):
         raise LcError(f"❌ 被拒絕（{resp.status_code}）：登入資訊失效了。到「設定 → 帳號」重新登入一次。" + tail, "login")
     if resp.status_code == 403:
         raise LcError(f"❌ 被拒絕（403），原因不明，看起來不是登入過期。\n"

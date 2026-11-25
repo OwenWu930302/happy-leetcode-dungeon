@@ -104,5 +104,25 @@ class SqlSolutionFileTests(unittest.TestCase):
         self.assertNotIn("meta-", code)
 
 
+class LoginErrorTests(unittest.TestCase):
+    """LeetCode 回「User is not authenticated」時，要告訴玩家重新登入，而不是「原因不明」。"""
+
+    def test_not_authenticated_is_a_login_error(self):
+        saved = lc.DATA_DIR
+        lc.DATA_DIR = Path(tempfile.mkdtemp())
+        try:
+            resp = type("Resp", (), {
+                "ok": False, "status_code": 403, "text": '{"error": "User is not authenticated"}',
+                "url": "https://leetcode.com/problems/x/interpret_solution/",
+                "headers": lc.requests.structures.CaseInsensitiveDict({}),
+                "request": type("Req", (), {"method": "POST"})()})()
+            with self.assertRaises(lc.LcError) as cm:
+                lc.check_response(resp, "試跑")
+            self.assertIn("重新登入", str(cm.exception))
+        finally:
+            shutil.rmtree(lc.DATA_DIR, ignore_errors=True)
+            lc.DATA_DIR = saved
+
+
 if __name__ == "__main__":
     unittest.main()
